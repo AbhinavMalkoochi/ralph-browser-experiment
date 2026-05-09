@@ -151,6 +151,44 @@ try {
 Budgets are enforced by `LLMClient` (US-004) and the tournament runner (US-010).
 A run that exceeds any axis is recorded as `BUDGET_EXCEEDED`.
 
+## LLMClient (US-004)
+
+`harness/ts/llm/` is the unified shim every agent uses to call models.
+
+```ts
+import { defaultClient } from "../../harness/ts/llm/index.js";
+
+const llm = defaultClient({ budget, trajectory, paradigmSeed: "react-v1" });
+const r = await llm.call("gpt-4o-mini", [
+  { role: "system", content: "you are an agent" },
+  { role: "user", content: goal },
+]);
+```
+
+- **Multi-provider**: `gpt-*` / `o4-*` / `o3-*` route to OpenAI Chat Completions;
+  `gemini-*` routes to Gemini `generateContent`. Anthropic is left to whichever
+  agent opts in.
+- **Cost accounting**: token counts are multiplied by `harness/ts/llm/pricing.ts`
+  list prices and recorded into the active `Budget` and `Trajectory`.
+- **Cache**: every call's `(model, messages, opts, paradigm_seed)` is sha256'd
+  and persisted under `runs/.cache/llm/`. `mode: "record"` (default) calls the
+  provider on miss; `mode: "replay"` throws `LLMReplayMissError` on miss.
+- **Budget enforcement**: `budget.check()` runs before AND after each call.
+  Pre-trip refuses without spending tokens; post-call detects the call that
+  pushed an axis over the line.
+- **Secret redaction**: API keys configured at provider construction never
+  appear in cache files, trajectories, or the error messages that escape the
+  client (`redactValues` scrubs them from any `Error.message`).
+- **Cross-language**: Python agents call `gba_agent.LLMClient.call(...)`; the
+  bridge forwards to the same TS client so cache/budget/trajectory accounting
+  is unified.
+
+The trajectory JSONL gains a third line kind alongside `meta` / `step` / `end`:
+
+```json
+{"kind":"llm_call","model":"gpt-4o-mini","prompt_hash":"...","prompt_tokens":42,"completion_tokens":7,"latency_ms":420,"cost_usd":0.0001,"cached":false}
+```
+
 ## Running a tournament
 
 `make tournament` loads every agent under `agents/` and every task under

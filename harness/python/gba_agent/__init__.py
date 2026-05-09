@@ -10,6 +10,13 @@ requests.
 from .agent import Agent, AgentContext
 from .browser import BrowserProxy
 from .budget import Budget, BudgetExceeded
+from .llm import (
+    LLMClient,
+    LLMMessage,
+    LLMProviderUnavailable,
+    LLMReplayMiss,
+    LLMResult,
+)
 from .trajectory import TrajectoryProxy
 
 __all__ = [
@@ -18,5 +25,10 @@ __all__ = [
     "BrowserProxy",
     "Budget",
     "BudgetExceeded",
+    "LLMClient",
+    "LLMMessage",
+    "LLMProviderUnavailable",
+    "LLMReplayMiss",
+    "LLMResult",
     "TrajectoryProxy",
 ]

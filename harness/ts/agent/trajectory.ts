@@ -3,7 +3,8 @@
 // Layout (one JSON object per line):
 //   {"kind":"meta", ...TrajectoryMetadata}
 //   {"kind":"step", ...TrajectoryStep}
-//   ...more steps...
+//   {"kind":"llm_call", model, prompt_hash, prompt_tokens, completion_tokens, latency_ms, cost_usd, cached}
+//   ...more steps and llm_calls, interleaved...
 //   {"kind":"end", end_time, terminal_state, verifier_verdict, decline_reason}
 //
 // On finish() we close the writer, gzip the .jsonl into .jsonl.gz, and remove
@@ -43,6 +44,16 @@ export interface FinishOpts {
   decline_reason?: string | null;
 }
 
+export interface LlmCallRecord {
+  model: string;
+  prompt_hash: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  latency_ms: number;
+  cost_usd: number;
+  cached: boolean;
+}
+
 export class Trajectory {
   readonly metadata: TrajectoryMetadata;
   readonly dir: string;
@@ -50,6 +61,7 @@ export class Trajectory {
   readonly gzPath: string;
   private writer: WriteStream;
   private readonly steps: TrajectoryStep[] = [];
+  private readonly llmCalls: LlmCallRecord[] = [];
   private finished = false;
 
   static async open(paths: TrajectoryPaths, init: TrajectoryInit): Promise<Trajectory> {
@@ -97,6 +109,12 @@ export class Trajectory {
     await this.writeLine({ kind: "step", ...step });
   }
 
+  async recordLlmCall(record: LlmCallRecord): Promise<void> {
+    if (this.finished) throw new Error("Trajectory already finished");
+    this.llmCalls.push(record);
+    await this.writeLine({ kind: "llm_call", ...record });
+  }
+
   /** End the trajectory, gzip the JSONL, and delete the raw file. Idempotent. */
   async finish(opts: FinishOpts): Promise<void> {
     if (this.finished) return;
@@ -130,5 +148,9 @@ export class Trajectory {
   /** Snapshot of recorded steps; mutating the array does not affect the writer. */
   snapshotSteps(): TrajectoryStep[] {
     return [...this.steps];
+  }
+
+  snapshotLlmCalls(): LlmCallRecord[] {
+    return [...this.llmCalls];
   }
 }

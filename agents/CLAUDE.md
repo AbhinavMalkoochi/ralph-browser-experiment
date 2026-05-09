@@ -59,6 +59,31 @@ AGENT_CLASS = MyAgent
 Trajectory ownership stays on the TS side; Python agents emit step/finish
 RPCs via the `TrajectoryProxy`.
 
+### LLM access (US-004)
+
+Both TS and Python agents call models through the harness's `LLMClient`,
+never the provider SDKs directly. The client handles multi-provider
+routing (OpenAI `gpt-*`/`o4-*`/`o3-*`, Gemini `gemini-*`), cost accounting,
+record-or-replay caching, budget enforcement, and secret redaction.
+
+```ts
+// TS
+import { defaultClient } from "../../harness/ts/llm/index.js";
+const llm = defaultClient({ budget, trajectory, paradigmSeed: this.id });
+const r = await llm.call("gpt-4o-mini", [{ role: "user", content: goal }]);
+```
+
+```python
+# Python
+from gba_agent import LLMClient
+llm = LLMClient(rpc)  # TODO: TrajectoryProxy will hand this in once US-013 lands
+r = llm.call("gpt-4o-mini", [{"role": "user", "content": goal}])
+```
+
+Calls to `llm.call()` may throw `BudgetExceeded` (over-budget pre-check) or
+`LLMReplayMissError` (replay mode + cache miss). Treat both like any other
+budget breach: finish the trajectory with the right `terminal_state`.
+
 ## Reference agents
 
 - `click-first-link/` — TS reference. Contract demo, not a tournament entry.

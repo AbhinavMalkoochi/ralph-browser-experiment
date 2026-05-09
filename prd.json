@@ -72,8 +72,8 @@
         "Tests pass"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented at harness/ts/llm/{types,pricing,cache,client,index}.ts and providers/{openai,gemini}.ts. LLMClient routes by model prefix (gpt-*/o4-*/o3-* → OpenAI Chat Completions, gemini-* → Gemini generateContent), records {model, prompt_hash, prompt_tokens, completion_tokens, latency_ms, cost_usd, cached} as a JSONL llm_call line in the active Trajectory, and persists deterministic cache entries under runs/.cache/llm/. Cache key is sha256(stable-json({model, messages, opts, paradigm_seed})). mode='record' (default) calls on miss + persists; mode='replay' throws LLMReplayMissError. Budget.check() runs before AND after each call. defaultClient(opts) wires providers from process.env (OPENAI_API_KEY, GEMINI_API_KEY) and registers the keys for redaction. Python proxy at harness/python/gba_agent/llm.py forwards over the bridge; runPythonAgent({llm}) registers the llm.call handler. Tests: 15 new TS tests (cache hashing, record/replay determinism, replay-miss, budget refusal pre+post, secret redaction, cache content scrub, trajectory llm_call line, OpenAI/Gemini wire shape), 4 new Python tests (RPC round-trip, message dataclass, replay-miss exception translation, provider-unavailable translation). Total now: 36 TS + 7 Python passing."
     },
     {
       "id": "US-005",

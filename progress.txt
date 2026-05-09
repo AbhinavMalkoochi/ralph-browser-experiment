@@ -63,6 +63,27 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   `deadlineHit` when the WS-close event fires AFTER release returns, so it
   can convert a "CDP session closed" rejection into SessionTimeoutError.
   Once the agent drops its session reference, GC reclaims the entry.
+- LLMClient (US-004) at `harness/ts/llm/`. Construct via `defaultClient({budget,
+  trajectory, paradigmSeed})` to pick up OPENAI_API_KEY / GEMINI_API_KEY from
+  the env. `await llm.call(model, messages, opts)` routes by model prefix
+  (gpt-*/o4-*/o3-* → OpenAI; gemini-* → Gemini). Cache lives at
+  runs/.cache/llm/<key[:2]>/<key>.json keyed by sha256(stable-json({model,
+  messages, opts, paradigm_seed})). mode='record' (default) calls on miss
+  and persists; mode='replay' throws LLMReplayMissError on miss.
+- LLM redaction is the LLMClient's job, not the provider's. Providers throw
+  raw Errors that may include the API key (Gemini's URL has it as a query
+  param). LLMClient catches at the boundary, replaces every `redactValues`
+  occurrence with `[REDACTED]`, and rethrows. Pass `redactValues: [apiKey]`
+  to LLMClient — defaultClient() does this automatically.
+- Trajectory JSONL gained a third line kind: `{"kind":"llm_call", model,
+  prompt_hash, prompt_tokens, completion_tokens, latency_ms, cost_usd,
+  cached}`. Recorded via `trajectory.recordLlmCall(...)` from inside
+  LLMClient. Snapshot accessor: `trajectory.snapshotLlmCalls()`.
+- Python agents reach the LLM via `gba_agent.LLMClient(rpc)` which forwards
+  to TS over the existing bridge. Register the handler by passing
+  `{llm: client}` to `runPythonAgent`. The Python proxy translates known
+  TS errors (LLMReplayMissError, LLMProviderUnavailableError) back to
+  typed Python exceptions (LLMReplayMiss, LLMProviderUnavailable).
 ---
 
 ## 2026-05-08 - US-001
@@ -266,4 +287,99 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     AFTER the outer `pool.withSession` race rejected — otherwise the .gz
     file might still be in flight when the test asserts on it. Pattern
     captured in `runHangAgent` helper inside pool.test.ts.
+---
+
+## 2026-05-08 - US-004
+- Added the unified LLM shim at `harness/ts/llm/{types,pricing,cache,client,index}.ts`
+  plus `providers/{openai,gemini}.ts`. Routes by model name prefix (gpt-*,
+  o4-*, o3-* → OpenAI; gemini-* → Gemini). Anthropic deferred per .env note.
+- Cache: file system, sha256(stable-json({model, messages, opts,
+  paradigm_seed})) → runs/.cache/llm/<key[:2]>/<key>.json. Atomic write via
+  rename-from-temp so racing replays can't tear. Stable-json sorts object
+  keys recursively so different declaration orders produce the same digest.
+- Pricing table at harness/ts/llm/pricing.ts (USD/1M tokens). Unknown model
+  → cost 0 rather than throw, so adding new models stays cheap.
+- Budget enforcement: `budget.check()` runs both before AND after each call.
+  Pre-call refusal short-circuits without invoking the provider; post-call
+  detects the call that pushed an axis over the line. The cache write
+  happens BEFORE the post-call check so the response isn't lost on overrun.
+- Trajectory hook: each call appends a JSONL line `{"kind":"llm_call",
+  model, prompt_hash, prompt_tokens, completion_tokens, latency_ms,
+  cost_usd, cached}`. Trajectory now also exposes `snapshotLlmCalls()` for
+  audit. The line kind set is now `{meta, step, llm_call, end}`.
+- Secret redaction: provider errors (e.g. Gemini URL leaking the key in a
+  fetch error) are caught at the LLMClient boundary; every `redactValues`
+  occurrence is replaced with `[REDACTED]` and a fresh Error is thrown.
+  defaultClient() auto-registers OPENAI_API_KEY / GEMINI_API_KEY for
+  redaction.
+- Python proxy: `harness/python/gba_agent/llm.py` ships `LLMClient`,
+  `LLMMessage`, `LLMResult`, `LLMReplayMiss`, `LLMProviderUnavailable`.
+  Forwards `llm.call(model, messages, **opts)` over the existing JSON-RPC
+  bridge. `runPythonAgent({llm})` registers the handler in TS.
+- Tests:
+  - `harness/ts/tests/llm_cache.test.ts` (3) — hashKey stability/sensitivity,
+    set/get round-trip with on-disk shape.
+  - `harness/ts/tests/llm_client.test.ts` (8) — record-then-replay determinism,
+    replay-miss error, paradigm_seed differentiation, pre-tripped budget
+    refusal, post-call BudgetExceeded with cache persisted, secret redaction
+    in error message, trajectory llm_call line shape, cache files do not
+    contain auth material (file walk).
+  - `harness/ts/tests/llm_providers.test.ts` (4) — OpenAI body/headers/URL
+    + usage parse, OpenAI 401 surfaces as Error, Gemini role mapping +
+    systemInstruction extraction + key-in-URL, Gemini error untouched at
+    provider layer.
+  - `harness/python/tests/test_llm.py` (4) — round-trip with plain dict
+    messages, dataclass coercion, LLMReplayMissError translation,
+    LLMProviderUnavailableError translation.
+- Files changed/added: harness/ts/llm/{types,pricing,cache,client,index}.ts
+  (new), harness/ts/llm/providers/{openai,gemini}.ts (new),
+  harness/ts/agent/trajectory.ts (recordLlmCall + snapshotLlmCalls + new
+  line kind), harness/ts/agent/python_bridge.ts (llm.call handler when
+  llm is provided), harness/ts/tests/{llm_cache,llm_client,llm_providers}.test.ts
+  (new), harness/python/gba_agent/llm.py (new),
+  harness/python/gba_agent/__init__.py (re-exports),
+  harness/python/tests/test_llm.py (new), README.md, agents/CLAUDE.md,
+  progress.txt, prd.json.
+- Quality checks: `npm run typecheck` clean; `npm test` 36/36 passing
+  (15 new); `uv run pytest -q` 7/7 passing (4 new). No real network
+  calls — providers tested with a stubbed fetch, RPC tested with an
+  in-memory pipe pair.
+- **Learnings for future iterations:**
+  - The `gba_agent` Python `__init__.py` re-exports the public surface;
+    when adding a new module (llm.py here), add its symbols to both the
+    `from .x import ...` and `__all__`. Test imports use `from gba_agent
+    import LLMClient` so this is load-bearing.
+  - LLM cache lives outside `runs/<agent>/<task>/<seed>/` so multiple
+    cells can share replay data. Putting it under `runs/.cache/llm/`
+    means `make clean` (which `rm -rf runs/`) wipes it alongside
+    trajectories, but a partial `rm -rf runs/<agent>/` won't.
+  - `noUncheckedIndexedAccess` plus stable-key extraction means stripping
+    `paradigm_seed` from opts uses the rename pattern: `const {
+    paradigm_seed: _drop, ...rest } = opts;`. The `_drop` underscore is
+    necessary or lint complains about an unused binding.
+  - When adding a JSON-RPC handler, pick names with a dotted namespace
+    prefix (browser.*, budget.*, trajectory.*, llm.*). The Python proxy
+    raises typed exceptions by string-matching the TS error name in the
+    RPC error message — not pretty but stable enough for now.
+  - In Gemini's request body, "system" messages are NOT a role on
+    `contents[]`; they go on a top-level `systemInstruction` field. The
+    provider extracts and joins them with "\n\n" before constructing
+    contents. Forgetting this gives a 400 about "invalid role: system".
+  - Cost is recomputed at read time (cache stores raw token counts only),
+    so editing pricing.ts retroactively updates every replayed run's
+    cost. Don't bake `cost_usd` into the cache file.
+  - The post-call `budget.check()` after `recordTokens` will throw, BUT
+    the cache.set() above it already persisted the response. That's
+    intentional — the call already cost money/tokens, the agent just
+    can't make any MORE calls. A replay with a fresh budget will pick
+    up the cached response.
+  - For Python tests, paired StdioJsonRpc peers over an `os.pipe()` pair
+    is a clean way to exercise RPC round trips without subprocesses or
+    network. Pattern: `_pair()` returns (a, b); register handlers on b,
+    issue calls from a, both `start()`-ed.
+  - We DO NOT redact at the provider layer. The provider's contract is
+    "throw any error verbatim"; LLMClient redacts at its boundary. This
+    keeps providers simple and lets tests assert that the unredacted
+    error contains the status code without bothering about which keys
+    are configured.
 ---

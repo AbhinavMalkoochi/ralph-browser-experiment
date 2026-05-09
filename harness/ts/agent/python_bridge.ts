@@ -26,6 +26,8 @@ import type {
   TrajectoryStep,
   VerifierVerdict,
 } from "./types.js";
+import type { LLMClient } from "../llm/client.js";
+import type { LLMMessage, LLMOpts } from "../llm/types.js";
 
 interface RpcRequest {
   jsonrpc: "2.0";
@@ -190,6 +192,12 @@ export interface RunPythonAgentOpts {
   budget: Budget;
   trajectory: Trajectory;
   ctx: AgentContext;
+  /**
+   * Optional LLMClient. When provided, the bridge registers an `llm.call`
+   * handler so the Python agent can issue model calls via the same
+   * cache/budget/trajectory plumbing as TS agents (US-004).
+   */
+  llm?: LLMClient;
 }
 
 /**
@@ -198,7 +206,7 @@ export interface RunPythonAgentOpts {
  * trajectory once Python signals completion.
  */
 export async function runPythonAgent(opts: RunPythonAgentOpts): Promise<Trajectory> {
-  const { bridge, agentId, goal, browser, budget, trajectory, ctx } = opts;
+  const { bridge, agentId, goal, browser, budget, trajectory, ctx, llm } = opts;
 
   bridge.register("browser.navigate", async (p) => {
     await browser.navigate(p.url as string);
@@ -252,6 +260,26 @@ export async function runPythonAgent(opts: RunPythonAgentOpts): Promise<Trajecto
     });
     return null;
   });
+
+  if (llm) {
+    bridge.register("llm.call", async (p) => {
+      const result = await llm.call(
+        p.model as string,
+        p.messages as LLMMessage[],
+        (p.opts as LLMOpts | undefined) ?? {},
+      );
+      return {
+        text: result.text,
+        model: result.model,
+        tokens_in: result.tokens_in,
+        tokens_out: result.tokens_out,
+        cost_usd: result.cost_usd,
+        latency_ms: result.latency_ms,
+        prompt_hash: result.prompt_hash,
+        cached: result.cached,
+      };
+    });
+  }
 
   await bridge.call("agent.run", {
     goal,
