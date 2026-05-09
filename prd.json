@@ -89,8 +89,8 @@
         "Tests pass"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented at harness/ts/verifier/{types,yaml,loader,programmatic,llm_judge,runner,index}.ts. Three verifier kinds: js (CDP Runtime.evaluate in page, awaitPromise=true so bare booleans, Promises, and {pass,score,reason} objects all flow uniformly), trajectory_predicate (JS expression compiled with new Function and run against {steps, llmCalls, metadata} snapshots), llm_judge (temperature=0, n=3 majority vote with distinct paradigm_seed per call so all three responses cache independently; only allowed when task tagged judge_required). loadTaskFile validates the spec at load time — missing fields, unknown difficulty/kind, llm_judge without judge_required tag, or a trajectory_predicate that fails to compile all throw InvalidTaskSpecError. Trajectory.recordVerification appends a `verification` JSONL line; finish() folds the most-recent verification into metadata.verifier_verdict when no explicit verdict is given. verify(task, ctx) writes a verdict.json sidecar by default. Sanity test (real Chrome, localhost fixture): trivial click-first-link agent navigates to a decoy and the JS verifier reports pass:false; an inline cheat agent clicks the completion button and the same verifier reports pass:true. Minimal in-tree YAML loader (no dep) handles the subset task specs need. Total: 72 TS tests (36 new) + 7 Python tests passing."
     },
     {
       "id": "US-006",

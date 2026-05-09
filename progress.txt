@@ -84,6 +84,29 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   `{llm: client}` to `runPythonAgent`. The Python proxy translates known
   TS errors (LLMReplayMissError, LLMProviderUnavailableError) back to
   typed Python exceptions (LLMReplayMiss, LLMProviderUnavailable).
+- Verifier framework (US-005) at `harness/ts/verifier/`. Three kinds:
+  `js` (CDP Runtime.evaluate in page, awaitPromise=true), `trajectory_predicate`
+  (JS expression run in Node against `{steps, llmCalls, metadata}` snapshots),
+  `llm_judge` (temp=0, n=3 majority vote; only allowed when task tagged
+  `judge_required`). `loadTaskFile(path)` parses YAML and validates the
+  verifier spec at load time — malformed specs (missing fields, bad kind,
+  llm_judge without judge_required, predicate that won't compile) fail
+  before the tournament starts. `verify(task, ctx, opts)` dispatches the
+  right verifier impl, optionally appends a `verification` JSONL line to
+  the open trajectory, and writes a `verdict.json` sidecar in the
+  trajectory directory.
+- Trajectory JSONL gained a fourth line kind: `{"kind":"verification",
+  pass, score, reason, verifier_kind, verified_at}`. `finish()` now folds
+  the most-recent verification into `metadata.verifier_verdict` when no
+  explicit verdict is passed. Snapshot accessor:
+  `trajectory.snapshotVerifications()`.
+- Minimal YAML loader at `harness/ts/verifier/yaml.ts` (no js-yaml dep).
+  Supports the subset task specs need: scalar mappings, nested mappings,
+  block + flow lists, quoted strings, comments, block scalars (| > with
+  -+ chomp). Tabs in indent rejected. Inline mappings inside list elements
+  are explicitly unsupported (workaround: nest the mapping). When US-006
+  fixtures push the format past this subset, swap in js-yaml — but the
+  subset has been chosen to cover the real task specs in this repo.
 ---
 
 ## 2026-05-08 - US-001
@@ -382,4 +405,92 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     keeps providers simple and lets tests assert that the unredacted
     error contains the status code without bothering about which keys
     are configured.
+---
+
+## 2026-05-08 - US-005
+- Added the verifier framework at `harness/ts/verifier/{types,yaml,loader,
+  programmatic,llm_judge,runner,index}.ts`. Three kinds (js / trajectory_
+  predicate / llm_judge), all returning a normalised `Verdict = {pass,
+  score, reason}`.
+- Wrote a minimal in-tree YAML loader (no dep) that handles every shape
+  the task spec format actually uses; rejected features throw
+  `InvalidYamlError` with a line number.
+- `loadTaskFile(path)` validates the task spec at load time. Reject paths
+  covered: missing/empty required fields, unknown difficulty, non-string
+  tag entries, unknown verifier kind, llm_judge without `judge_required`
+  tag, trajectory_predicate that won't compile (caught with new Function),
+  empty js expression.
+- Programmatic verifiers:
+  - `JsVerifier` wraps the expression in `(async () => (EXPR))()` so a
+    bare value, a Promise, or a {pass,score,reason} object all flow
+    through `Runtime.evaluate(awaitPromise=true)`. Page-side throws map
+    to `{pass:false, reason:"js verifier threw: ..."}`.
+  - `TrajectoryPredicateVerifier` compiles the expression with
+    `new Function("traj", "return (EXPR)")` once at construction time
+    and feeds it `{steps, llmCalls, metadata}` snapshots from the open
+    trajectory. Async predicates supported; thrown errors map to graceful
+    fail.
+- LLM judge (`LlmJudgeVerifier`): three calls with `temperature: 0` and
+  `paradigm_seed: "judge:0"|":1"|":2"` (so the cache stores three
+  independent entries; replay is fully deterministic). Single-token
+  PASS/FAIL prompt + tolerant normaliser (also accepts yes/no/true/false).
+  Majority over the three votes wins; ties fall back to fail.
+- `Trajectory.recordVerification(record)` appends a `verification` JSONL
+  line and (when `finish()` is called without an explicit
+  `verifier_verdict`) the most-recent verification is folded into
+  `metadata.verifier_verdict`. Snapshot accessor added.
+- `verify(task, ctx, opts)` dispatcher: builds the verifier, runs it,
+  appends to the trajectory (default on), writes a `verdict.json` sidecar
+  (default on). Both side-effects are individually opt-out.
+- Sanity test (US-005 AC #5) runs against real Chrome on a tiny localhost
+  fixture page. The `ClickFirstLinkAgent` clicks the trap link and ends
+  up on `/decoy`; the JS verifier checks `window.__test.success === true`,
+  which is only set on the start page → `pass:false`. A hand-written
+  inline `CheatAgent` clicks the completion button so the flag flips →
+  `pass:true`. Sidecar `verdict.json` is asserted in both cases.
+- README: added a "Verifier framework (US-005)" section. agents/CLAUDE.md
+  notes that the harness — not the agent — runs the verifier, but agents
+  may call `recordVerification` for self-checks mid-run.
+- Files changed/added: harness/ts/verifier/{types,yaml,loader,programmatic,
+  llm_judge,runner,index}.ts (new), harness/ts/agent/trajectory.ts
+  (recordVerification + verification line + snapshotVerifications +
+  finish() folds latest verification into metadata),
+  harness/ts/tests/{verifier_yaml,verifier_loader,verifier_llm_judge,
+  verifier_trajectory,verifier_sanity}.test.ts (new), README.md,
+  agents/CLAUDE.md, progress.txt, prd.json.
+- Quality checks: `npm run typecheck` clean; `npm test` 72/72 passing
+  (36 new); `uv run pytest -q` 7/7 passing.
+- **Learnings for future iterations:**
+  - `Trajectory.recordVerification` MUST be called before `finish()`
+    because `finish()` ends the writer and gzips. The verifier framework
+    catches this for you (it skips the trajectory write when
+    `trajectory.isFinished`), but agents writing self-checks mid-run
+    need to be explicit.
+  - The `verdict.json` sidecar is for fast inspection without opening the
+    `.gz`. Both writes happen by default; if you only want one, pass
+    `{writeAuditFile:false}` or `{recordIntoTrajectory:false}`.
+  - The minimal YAML loader is intentionally narrow. If you hit
+    `InvalidYamlError` while writing a fixture spec for US-006/008/009,
+    rewrite the spec to fit the subset (e.g. nest a mapping instead of
+    inlining `- a: 1`) rather than reaching for js-yaml — keeping the
+    parser tiny is part of the no-deps contract.
+  - For llm_judge, three calls with distinct `paradigm_seed` values
+    populate three independent cache entries. Replay is therefore
+    deterministic across reruns even though the model is sampled three
+    times. Raising N (n=5, n=7) is a one-line change in `llm_judge.ts`.
+  - Verifier `js` expression is wrapped as `(async () => (EXPR))()` then
+    sent with `awaitPromise=true`. This lets fixture authors return a
+    Promise (e.g. `fetch('/__test/last').then(j => j.user === 'alice')`)
+    without thinking about async vs sync. Bare booleans, objects, and
+    Promises all work.
+  - The verifier-side trivial-fails / cheat-passes test pattern: spin up
+    a `node:http` fixture server (same pattern as pool tests), navigate
+    each agent on a fresh `CdpBrowserSession` (so trivial agent's
+    navigation away doesn't taint the cheat agent's run), call `verify()`
+    against the still-open browser session, assert the verdict.
+  - Trivial agent's `terminal_state` was DONE for the failing case — it
+    thought it succeeded, but the verifier disagreed. This is the
+    intended distinction: an agent's self-reported terminal state is
+    independent of the verifier verdict, and tournament metrics will use
+    the verifier verdict as ground truth.
 ---

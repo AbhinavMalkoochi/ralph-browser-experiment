@@ -189,6 +189,65 @@ The trajectory JSONL gains a third line kind alongside `meta` / `step` / `end`:
 {"kind":"llm_call","model":"gpt-4o-mini","prompt_hash":"...","prompt_tokens":42,"completion_tokens":7,"latency_ms":420,"cost_usd":0.0001,"cached":false}
 ```
 
+## Verifier framework (US-005)
+
+`harness/ts/verifier/` defines the contract every task uses to declare success.
+Each task ships a verifier spec; the harness runs it after the agent and
+records the verdict next to (and inside) the trajectory.
+
+Three verifier kinds:
+
+- **`js`** — expression evaluated in the page via CDP `Runtime.evaluate`.
+  Preferred path for state-of-page checks.
+- **`trajectory_predicate`** — JS expression evaluated in Node against
+  `traj.{steps, llmCalls, metadata}`. Useful for asserting on the agent's
+  recorded actions.
+- **`llm_judge`** — temperature=0, n=3 majority vote against a frontier model.
+  Allowed only when the task is tagged `judge_required`; the loader rejects
+  any other case.
+
+Task spec format (YAML):
+
+```yaml
+id: shadow-form
+goal: |
+  Submit "alice" / "secret" to the shadow form
+start_url: http://127.0.0.1:8123/shadow
+difficulty: hard
+tags: [shadow_dom, form]
+verifier:
+  kind: js
+  expression: |
+    fetch('/__test/last').then(r => r.json()).then(j => j.user === 'alice')
+```
+
+`loadTaskFile(path)` parses the YAML and validates the verifier spec at load
+time — a malformed verifier spec or `kind=llm_judge` without `judge_required`
+fails before the tournament starts running.
+
+```ts
+import { loadTaskFile, verify } from "./harness/ts/verifier/index.js";
+
+const task = await loadTaskFile("tasks/suite/hard/shadow-form.yaml");
+const verdict = await verify(task, { browser, trajectory, llm });
+//      ^ {pass, score, reason}
+```
+
+`verify(task, ctx)` does three things:
+1. dispatches to the right verifier impl
+2. appends a `verification` JSONL line into the open trajectory
+   (so the audit lives inside `trajectory.jsonl.gz`)
+3. writes a `verdict.json` sidecar in the trajectory directory for fast,
+   gzip-free inspection
+
+Both side-effects are individually opt-out via
+`{recordIntoTrajectory: false, writeAuditFile: false}`.
+
+`Trajectory.recordVerification(record)` is also exposed directly so an agent
+that wants to self-verify mid-run can append additional verification lines.
+On `finish()`, if no explicit `verifier_verdict` is given but verifications
+were recorded, the most-recent verification is folded into `metadata`.
+
 ## Running a tournament
 
 `make tournament` loads every agent under `agents/` and every task under

@@ -4,13 +4,15 @@
 //   {"kind":"meta", ...TrajectoryMetadata}
 //   {"kind":"step", ...TrajectoryStep}
 //   {"kind":"llm_call", model, prompt_hash, prompt_tokens, completion_tokens, latency_ms, cost_usd, cached}
-//   ...more steps and llm_calls, interleaved...
+//   {"kind":"verification", pass, score, reason, verifier_kind, verified_at}
+//   ...steps, llm_calls, and (optionally) interim verifications interleaved...
 //   {"kind":"end", end_time, terminal_state, verifier_verdict, decline_reason}
 //
 // On finish() we close the writer, gzip the .jsonl into .jsonl.gz, and remove
 // the raw file. The presence of trajectory.jsonl.gz is the signal to the
 // resumable tournament runner (US-010) that this (agent, task, seed) cell is
-// done.
+// done. If a verification line was recorded and finish() is called without an
+// explicit verifier_verdict, the most-recent verification is used.
 
 import { mkdir, rm } from "node:fs/promises";
 import { createWriteStream, createReadStream, type WriteStream } from "node:fs";
@@ -54,6 +56,14 @@ export interface LlmCallRecord {
   cached: boolean;
 }
 
+export interface VerificationRecord {
+  pass: boolean;
+  score: number;
+  reason: string;
+  verifier_kind: string;
+  verified_at: string;
+}
+
 export class Trajectory {
   readonly metadata: TrajectoryMetadata;
   readonly dir: string;
@@ -62,6 +72,7 @@ export class Trajectory {
   private writer: WriteStream;
   private readonly steps: TrajectoryStep[] = [];
   private readonly llmCalls: LlmCallRecord[] = [];
+  private readonly verifications: VerificationRecord[] = [];
   private finished = false;
 
   static async open(paths: TrajectoryPaths, init: TrajectoryInit): Promise<Trajectory> {
@@ -115,13 +126,31 @@ export class Trajectory {
     await this.writeLine({ kind: "llm_call", ...record });
   }
 
+  async recordVerification(record: VerificationRecord): Promise<void> {
+    if (this.finished) throw new Error("Trajectory already finished");
+    this.verifications.push(record);
+    await this.writeLine({ kind: "verification", ...record });
+  }
+
   /** End the trajectory, gzip the JSONL, and delete the raw file. Idempotent. */
   async finish(opts: FinishOpts): Promise<void> {
     if (this.finished) return;
     this.finished = true;
     this.metadata.end_time = new Date().toISOString();
     this.metadata.terminal_state = opts.terminal_state;
-    this.metadata.verifier_verdict = opts.verifier_verdict ?? null;
+    const explicitVerdict = opts.verifier_verdict;
+    if (explicitVerdict !== undefined) {
+      this.metadata.verifier_verdict = explicitVerdict;
+    } else if (this.verifications.length > 0) {
+      const last = this.verifications[this.verifications.length - 1] as VerificationRecord;
+      this.metadata.verifier_verdict = {
+        pass: last.pass,
+        score: last.score,
+        reason: last.reason,
+      };
+    } else {
+      this.metadata.verifier_verdict = null;
+    }
     this.metadata.decline_reason = opts.decline_reason ?? null;
     await this.writeLine({
       kind: "end",
@@ -152,5 +181,9 @@ export class Trajectory {
 
   snapshotLlmCalls(): LlmCallRecord[] {
     return [...this.llmCalls];
+  }
+
+  snapshotVerifications(): VerificationRecord[] {
+    return [...this.verifications];
   }
 }

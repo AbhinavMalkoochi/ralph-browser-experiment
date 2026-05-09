@@ -84,6 +84,36 @@ Calls to `llm.call()` may throw `BudgetExceeded` (over-budget pre-check) or
 `LLMReplayMissError` (replay mode + cache miss). Treat both like any other
 budget breach: finish the trajectory with the right `terminal_state`.
 
+### Verifiers (US-005)
+
+Agents do NOT run task verifiers themselves; the harness does, after `run()`
+returns. But agents may call `trajectory.recordVerification(record)` mid-run
+to log interim self-checks (the JSONL line kind is `verification`). On
+`finish()`, if no explicit `verifier_verdict` is passed and verifications
+were recorded, the latest one is folded into `metadata.verifier_verdict`.
+
+Tasks ship YAML specs under `tasks/suite/<slice>/`. The verifier framework
+lives at `harness/ts/verifier/`:
+
+```ts
+import { loadTaskFile, verify } from "../../harness/ts/verifier/index.js";
+
+const task = await loadTaskFile(taskPath);
+const verdict = await verify(task, { browser, trajectory, llm });
+// verdict: {pass: boolean, score: 0..1, reason: string}
+```
+
+Three verifier kinds, validated at task load:
+- `js` — expression run in the page (CDP Runtime.evaluate, awaitPromise=true)
+- `trajectory_predicate` — JS expression run in Node against
+  `{steps, llmCalls, metadata}` snapshots
+- `llm_judge` — temperature=0, n=3 majority vote; only allowed when the task
+  is tagged `judge_required`
+
+`verify()` writes `verdict.json` next to `trajectory.jsonl.gz` for a
+gzip-free audit trail, and appends a `verification` line to the open
+trajectory.
+
 ## Reference agents
 
 - `click-first-link/` — TS reference. Contract demo, not a tournament entry.
