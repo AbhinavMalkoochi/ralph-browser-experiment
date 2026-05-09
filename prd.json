@@ -1,0 +1,443 @@
+{
+  "project": "general-browser",
+  "branchName": "ralph/general-browser-agent",
+  "description": "Tournament harness comparing COMPLETE end-to-end browser agents under self-invented approaches, evaluated on a deliberately hard browser-task suite. Each Ralph iteration either (a) builds harness infrastructure, (b) ships a NEW complete agent under an approach DISTINCT in core mechanism from every agent already present, (c) mines past trajectories for new approach ideas, or (d) advances the tournament. Ralph is encouraged to INVENT its own approaches; the seed paradigms in tasks/prd-general-browser-agent.md §6 (P1–P12) and the P13+ hypotheses are inspiration, NOT a checklist and NOT a constraint. Repeat the open agent slots with novel mechanisms each time. The full PRD lives at tasks/prd-general-browser-agent.md — read it before each iteration.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Bootstrap workspace and CDP smoke test",
+      "description": "As a researcher, I need a single command to install deps, launch headless Chrome with CDP, and run a hello-world task, so the environment is reproducible.",
+      "acceptanceCriteria": [
+        "Initialise pyproject.toml (uv) and package.json (npm + tsconfig) at repo root",
+        "Add Makefile with `make install`, `make smoke`, `make eval`, `make tournament`, `make report` targets",
+        "`make smoke` boots Chrome with --remote-debugging-port, fetches /json/version, navigates to about:blank, exits 0, leaves no orphan Chrome processes",
+        ".env.example documents OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY (optional), GBA_POOL_SIZE",
+        "README.md explains the harness, agent slot convention, and how to run a tournament",
+        ".gitignore excludes runs/, .env, node_modules, .venv, *.gz",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Implemented at harness/ts/cdp/{launch,client}.ts and harness/ts/smoke.ts. Smoke completes in ~1s; tests assert chrome reaped and user-data-dir removed. eval/tournament/report Makefile targets are stubs that delegate to harness/ts/cli/*.ts."
+    },
+    {
+      "id": "US-002",
+      "title": "Define Agent interface and Trajectory record",
+      "description": "As an agent author, I need a stable Agent base class and Trajectory schema so any complete agent composes with the harness.",
+      "acceptanceCriteria": [
+        "TypeScript Agent base class with `run(goal: string, browser: BrowserSession, budget: Budget) -> Trajectory`",
+        "Python equivalent that talks to the TS harness over stdio JSON-RPC for cross-language agents",
+        "Trajectory is JSONL-serialisable with per-step records: {step, observation_summary, action, latency_ms, tokens_in, tokens_out, cost_usd, screenshot_path, verifier_state}",
+        "Trajectory includes per-run metadata: {agent_id, task_id, seed, start_time, end_time, terminal_state, verifier_verdict, decline_reason}",
+        "Trivial 'click first link' agent demonstrates the contract end-to-end on about:blank fixture",
+        "Trajectories land at runs/<agent>/<task>/<seed>/trajectory.jsonl and are gzipped on completion",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "CDP browser pool with per-task isolation and snapshot/restore",
+      "description": "As a harness operator, I need N parallel Chrome contexts in a pool with per-task isolation and snapshot/restore so agent runs do not cross-contaminate and rollback-style agents have a substrate.",
+      "acceptanceCriteria": [
+        "BrowserPool (configurable size via GBA_POOL_SIZE, default 4) hands out isolated BrowserSession objects",
+        "Each BrowserSession uses a unique --user-data-dir torn down on release",
+        "BrowserSession exposes snapshot() and restore(snapshot) using CDP Page.captureSnapshot and storage state dump",
+        "Pool is crash-only: a wedged session is killed and replaced without taking the harness down",
+        "Per-task hard timeout kills the session and records SESSION_TIMEOUT",
+        "Smoke test: 8 tasks against the trivial agent run in parallel without cross-contamination of cookies/localStorage",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "LLMClient with multi-provider, cost tracking, replay cache, and budget enforcement",
+      "description": "As any agent, I need a unified LLM shim that talks to OpenAI and Gemini, records cost, supports replay-from-cache, and refuses calls that would exceed the per-task budget.",
+      "acceptanceCriteria": [
+        "Unified async call(model, messages, **opts) signature; supports OpenAI Chat/Responses and Gemini",
+        "Records {model, prompt_hash, prompt_tokens, completion_tokens, latency_ms, cost_usd} per call into the active Trajectory",
+        "Cache keyed by (model, prompt_hash, paradigm_seed); record mode persists, replay mode short-circuits",
+        "Per-task Budget object (tokens, usd, wall_seconds, steps) is checked before every call; exceeding raises BudgetExceeded which the harness records as BUDGET_EXCEEDED",
+        "Auth headers and API keys never appear in logs or trajectories",
+        "Tests cover record-then-replay determinism and budget refusal",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Verifier framework (programmatic predicates + LLM-judge fallback)",
+      "description": "As a researcher, I need every task to ship with a programmatic verifier and an optional LLM-judge fallback so success is measured the same way for every agent.",
+      "acceptanceCriteria": [
+        "Verifier signature `verify(task, browser, trajectory) -> {pass: bool, score: 0..1, reason: str}` is enforced at task load",
+        "Programmatic verifiers run inside the page (CDP Runtime.evaluate) or against trajectory facts; preferred path",
+        "LLM-judge fallback uses temperature=0, n=3 majority vote, GPT-4o or equivalent, only when task is tagged judge_required",
+        "Verifier verdicts (pass/fail/score/reason) are themselves logged into the trajectory for audit",
+        "Sanity test: trivial agent fails non-trivial tasks; a hand-written 'cheat' agent passes them",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Hard task suite v1 (3 brutal local fixtures)",
+      "description": "As a researcher, I need local browser fixtures that defeat naive agents so the tournament's hard slice has reproducible difficulty without depending on live sites.",
+      "acceptanceCriteria": [
+        "tasks/fixtures/ contains a tiny Express/Vite server that serves three deliberately hostile pages",
+        "Fixture 1: shadow-DOM-only form inside an open shadow root; goal = submit specific values; verifier checks server-side receipt log",
+        "Fixture 2: canvas-rendered diagram editor; goal = drag a labelled node from A to B; verifier checks final coordinates via window.__test",
+        "Fixture 3: virtualised infinite-scroll feed; goal = find and click an item past the 200th row; verifier checks click event id",
+        "Each fixture has a YAML task spec under tasks/suite/hard/ with verifier_kind=programmatic and difficulty=hard",
+        "`make eval AGENT=trivial SLICE=hard` runs the slice and reports failures",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Hard task suite v2 (3 more brutal local fixtures)",
+      "description": "Expand the hard slice with three additional fixtures targeting modal stacks, conditional forms, and cross-iframe interactions.",
+      "acceptanceCriteria": [
+        "Fixture 4: three nested modals that must be navigated in a specific order; verifier checks final state machine state",
+        "Fixture 5: form whose validation rules CHANGE mid-stream based on prior field values; verifier checks server receipt of correct conditional path",
+        "Fixture 6: cross-iframe drag-and-drop (drag from iframe A into iframe B); verifier checks drop coordinates",
+        "Each fixture has a YAML spec with difficulty=hard and an `irreversible` tag where applicable",
+        "Trivial agent fails all three; hand-crafted reference solution passes all three",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Hard task suite v3 (4 final brutal fixtures, 10 total)",
+      "description": "Round out the hard slice with fixtures for late hydration, multi-tab workflows, recoverable failure, and PDF-then-summarise.",
+      "acceptanceCriteria": [
+        "Fixture 7: late-hydration SPA where the visible button is non-functional for the first 1500ms; verifier requires post-hydration click",
+        "Fixture 8: multi-tab workflow where clicking 'open report' spawns a new tab with the answer; verifier checks data was carried back",
+        "Fixture 9: recoverable failure - submit endpoint returns 500 once before succeeding; verifier checks final 200 receipt",
+        "Fixture 10: download a PDF and answer a question about its contents; verifier checks the answer string",
+        "Hard slice is now exactly 10 fixtures; reference solution passes >=8 of 10",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Easy slice loader (WebVoyager-style subset, ~20 tasks)",
+      "description": "As a researcher, I need an easy slice that exercises agents on a broad mix of real public sites with cheap programmatic verifiers, so we can quickly tell whether a new agent is wired up correctly.",
+      "acceptanceCriteria": [
+        "tasks/suite/easy/ contains ~20 task YAMLs spanning at least 10 sites (e.g., search, docs, e-commerce reads, news, reference)",
+        "Each task uses a verifier that does NOT require auth or destructive actions",
+        "Each task has steps<=5, words<=120 in the goal, and a tag indicating its primary skill (search, navigate, extract, fill)",
+        "`make eval AGENT=baseline SLICE=easy` runs all easy tasks and prints a summary table",
+        "Tasks tolerate live-site flakiness via 2 retries before recording a failure",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Resumable tournament runner with budget enforcement",
+      "description": "As a researcher, I want one command to run all agents × all tasks × N seeds with per-task budgets, resumable across restarts, that emits a structured leaderboard.",
+      "acceptanceCriteria": [
+        "`make tournament` loads agents from agents/, tasks from tasks/suite/<slice>/, runs each (agent, task, seed) cell",
+        "Per-task budgets enforced: easy(50k tokens, $0.20, 60s, 15 steps), medium(200k, $1.00, 240s, 40 steps), hard(600k, $3.00, 600s, 80 steps)",
+        "Resumable: a (agent, task, seed) cell with a completed trajectory is NOT re-executed",
+        "Emits runs/leaderboard.json with per-agent rows: {success_pct, mean_steps, mean_cost_usd, p50_latency_ms, p95_latency_ms, recovery_count, decline_count}",
+        "Single-elimination logic supported by a CLI flag (--bracket=on)",
+        "Tournament completes the trivial+baseline pair on the easy slice without manual intervention",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Markdown leaderboard report generator",
+      "description": "As a stakeholder, I want a regenerable markdown report from leaderboard.json so I can read tournament results without running the harness.",
+      "acceptanceCriteria": [
+        "`make report` reads runs/leaderboard.json and writes docs/leaderboard.md",
+        "Report includes a sorted table per slice (easy, medium, hard) and an overall Pareto chart description (success_pct vs mean_cost_usd)",
+        "Report links to the per-agent README (agents/<id>/README.md) and the agent's best trajectory artefact",
+        "Report includes a 'failure cluster' section grouping failures by tag/error_class for the latest run",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Agent auto-discovery and contract tests",
+      "description": "As Ralph, I need to drop a new agent into agents/<id>/ and have the harness pick it up automatically with no central registry edit, so adding agents stays cheap.",
+      "acceptanceCriteria": [
+        "Convention: agents/<id>/ contains agent.ts (or agent.py) exporting a default Agent subclass and a manifest.yaml ({id, language, summary, approach_keywords, distinct_from})",
+        "Harness scans agents/ on tournament start; missing or invalid agents are reported but do not abort the run",
+        "Contract test runs each agent on a 1-task dry slice and rejects agents that do not produce a Trajectory",
+        "manifest.distinct_from is enforced: a new agent declaring distinct_from=['agent-x'] is rejected if its approach_keywords overlap >50% with agent-x's",
+        "Adding a no-op agent under agents/ requires zero edits outside that directory",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Honest baseline agent (a11y + ReAct, browser-use-style) as control",
+      "description": "As a researcher, I need an honest control agent reproducing the dominant 2026 pattern so all novel approaches have a fair comparison point.",
+      "acceptanceCriteria": [
+        "agents/baseline-a11y-react/ implements a complete end-to-end agent: a11y snapshot via CDP, interactive-element labelling, ReAct loop, action set {click, type, scroll, wait, navigate, extract, finish}",
+        "Agent runs end-to-end on >=15/20 easy tasks and >=1/10 hard tasks",
+        "Agent's manifest.yaml documents the approach in plain language and lists approach_keywords",
+        "Agent's README.md cites prior art (browser-use, Stagehand, etc.) and explains differences if any",
+        "Trajectories from a full easy-slice run are committed under runs/ (gzipped)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Agent slot 1 — first novel complete agent",
+      "description": "As Ralph, I will design and ship a COMPLETE end-to-end browser agent under an approach of my choosing. The approach must be DISTINCT in core mechanism from agents/baseline-a11y-react. I MAY draw inspiration from tasks/prd-general-browser-agent.md §6 (P1–P12) or invent something not in the PRD. The goal is breadth: cover a different point in the design space.",
+      "acceptanceCriteria": [
+        "New agent lives at agents/<unique-id>/ with agent.ts (or agent.py), manifest.yaml, and README.md describing the approach in 200–500 words",
+        "manifest.approach_keywords lists the 3–6 mechanisms that define the approach (e.g., event_bus, code_gen, world_model, skill_library, filesystem_memory, in_page_runtime, multi_tab_search, verifier_first, budgeted_recursion, distillation, OR something Ralph invents)",
+        "manifest.distinct_from = ['baseline-a11y-react']; auto-discovery distinctness check passes",
+        "Agent completes the full easy slice (no abandons, all trajectories logged) and attempts the full hard slice",
+        "Agent achieves >=3/20 easy and >=1/10 hard, OR produces a documented failure analysis in README.md if below that bar",
+        "If the implementation cannot fit in one iteration, leave a clear TODO.md in the agent dir; the next iteration will resume",
+        "Trajectories committed under runs/ (gzipped)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "Agent slot 2 — second novel complete agent",
+      "description": "As Ralph, I will ship another COMPLETE end-to-end browser agent. Its approach MUST be distinct in core mechanism from every agent already in agents/. Look at the existing manifests' approach_keywords; pick a non-overlapping point in the design space, or invent one outright. Inspiration may come from PRD §6 OR from anything else — do NOT feel limited to the seed paradigms.",
+      "acceptanceCriteria": [
+        "Agent lives at agents/<unique-id>/ with agent.ts (or agent.py), manifest.yaml, README.md",
+        "manifest.distinct_from lists every existing agent id; auto-discovery distinctness check passes",
+        "approach_keywords describe a mechanism that does NOT majority-overlap with any existing agent",
+        "Agent completes the easy slice and attempts the hard slice with full trajectories committed",
+        "Agent achieves >=3/20 easy and >=1/10 hard, OR produces a documented failure analysis",
+        "TODO.md left if work is incomplete",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "Agent slot 3 — third novel complete agent",
+      "description": "As Ralph, ship the third complete end-to-end browser agent. Distinct mechanism from all existing agents. Free to invent.",
+      "acceptanceCriteria": [
+        "Same structure as US-015: agents/<unique-id>/ with agent + manifest + README",
+        "manifest.distinct_from lists all existing agent ids; distinctness check passes",
+        "approach_keywords distinct from all existing agents",
+        "Easy slice complete + hard slice attempted with trajectories committed",
+        "Achieves >=3/20 easy and >=1/10 hard, OR includes failure analysis",
+        "TODO.md if incomplete",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-017",
+      "title": "Agent slot 4 — fourth novel complete agent",
+      "description": "As Ralph, ship the fourth complete end-to-end browser agent. Distinct mechanism. Free to invent. Consider attacking a failure mode you have observed in earlier agents' trajectories.",
+      "acceptanceCriteria": [
+        "Same structure as previous slots",
+        "Distinctness check passes",
+        "Easy slice complete + hard slice attempted",
+        "Achieves >=3/20 easy and >=1/10 hard, OR includes failure analysis",
+        "README cites which prior failure mode (with trajectory IDs) the new approach attempts to address, if any",
+        "TODO.md if incomplete",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-018",
+      "title": "Agent slot 5 — fifth novel complete agent",
+      "description": "As Ralph, ship the fifth complete end-to-end browser agent. Distinct mechanism. Free to invent. By this point Ralph should be moving beyond the PRD seed paradigms and proposing genuinely original mechanisms.",
+      "acceptanceCriteria": [
+        "Same structure as previous slots",
+        "Distinctness check passes",
+        "README must include a 'novelty' section explaining what is genuinely new vs prior art (own agents AND public frameworks)",
+        "Easy slice complete + hard slice attempted",
+        "Achieves >=3/20 easy and >=1/10 hard, OR includes failure analysis",
+        "TODO.md if incomplete",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-019",
+      "title": "Agent slot 6 — sixth novel complete agent",
+      "description": "As Ralph, ship the sixth complete end-to-end browser agent. Distinct mechanism. Free to invent.",
+      "acceptanceCriteria": [
+        "Same structure as previous slots",
+        "Distinctness check passes",
+        "Easy slice complete + hard slice attempted",
+        "Achieves >=3/20 easy and >=1/10 hard, OR includes failure analysis",
+        "TODO.md if incomplete",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-020",
+      "title": "Agent slot 7 — seventh novel complete agent",
+      "description": "As Ralph, ship the seventh complete end-to-end browser agent. Distinct mechanism. Free to invent. Consider compositions or hybrids of mechanisms used by earlier agents — but the COMPOSITION must itself be novel as a mechanism (not just 'A + B').",
+      "acceptanceCriteria": [
+        "Same structure as previous slots",
+        "Distinctness check passes; if hybrid, README explains why composition is qualitatively new",
+        "Easy slice complete + hard slice attempted",
+        "Achieves >=3/20 easy and >=1/10 hard, OR includes failure analysis",
+        "TODO.md if incomplete",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-021",
+      "title": "Agent slot 8 — eighth novel complete agent (Ralph-invented strongly preferred)",
+      "description": "As Ralph, ship the eighth complete end-to-end browser agent. Distinct mechanism. Strongly preferred: an approach NOT mentioned in the PRD's seed paradigms or P13+ hypotheses — something Ralph designs from scratch based on what trajectories from earlier slots have revealed.",
+      "acceptanceCriteria": [
+        "Same structure as previous slots",
+        "Distinctness check passes",
+        "README explicitly notes whether the approach derives from PRD seed paradigms or is Ralph-original; preference is for Ralph-original at this point",
+        "README cites at least 2 specific failure traces from earlier agents that motivated this approach",
+        "Easy slice complete + hard slice attempted",
+        "Achieves >=3/20 easy and >=1/10 hard, OR includes failure analysis",
+        "TODO.md if incomplete",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-022",
+      "title": "Mine failure traces and propose >=3 new approach hypotheses",
+      "description": "As Ralph, I will analyse all trajectories under runs/ and write a document proposing new approaches grounded in observed failure clusters. This story does NOT add an agent; it produces a research note that future iterations may pick up.",
+      "acceptanceCriteria": [
+        "docs/failure-clusters-<date>.md groups failures across all agents by error_class, task tag, and step type",
+        "docs/proposed-approaches-<date>.md proposes >=3 new approaches, each with: motivating trace IDs, hypothesised mechanism, falsifiable prediction, and the slice/tag where it should beat the current champion",
+        "Both documents reference specific trajectory paths under runs/ for evidence",
+        "Approaches must NOT duplicate existing agents' approach_keywords",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-023",
+      "title": "Run full tournament across all agents and slices",
+      "description": "As a researcher, I want a full tournament across every agent in agents/ on every slice (easy, hard) with N>=3 seeds and the resulting champion declared and analysed.",
+      "acceptanceCriteria": [
+        "`make tournament SLICE=easy SEEDS=3` and `SLICE=hard SEEDS=3` both complete",
+        "runs/leaderboard.json updated with per-slice and overall rankings",
+        "docs/leaderboard.md regenerated and committed",
+        "Champion identified as: highest hard-slice success_pct; tiebreaker: lower mean_cost_usd; second tiebreaker: lower p95_latency_ms",
+        "docs/champion-<date>.md describes the champion's mechanism, why it won (with trace IDs), and the tasks it consistently fails",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-024",
+      "title": "Build mixture meta-agent from top performers",
+      "description": "As Ralph, I will build a meta-agent that routes each incoming task to the most appropriate of the top-3 agents from the latest tournament, based on lightweight task features. This tests whether per-task routing beats any single agent.",
+      "acceptanceCriteria": [
+        "agents/meta-mixture/ implements a routing agent that selects among the top-3 agents per task based on cheap features (URL host, goal length, presence of keywords, etc.)",
+        "Router decision policy is documented in README.md and is itself trained or tuned ONLY on the easy slice",
+        "Meta-agent runs the full hard slice without leakage of hard-slice signal into the router",
+        "Tournament re-runs with the meta-agent included; if meta-agent beats every single-mechanism agent on hard, declare it the new champion in docs/champion-<date>.md",
+        "If meta-agent does NOT beat the single-mechanism champion, README.md analyses why",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 24,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-025",
+      "title": "Final post-mortem and next-paradigm proposals",
+      "description": "As a stakeholder, I want a written post-mortem covering the full project: what mechanisms won, what surprised us, what failed, and what to try next.",
+      "acceptanceCriteria": [
+        "docs/results.md contains: champion summary, full leaderboard table, ablation findings, failure taxonomy, mechanism-to-success-pct correlation, and >=3 falsifiable next-paradigm hypotheses",
+        "Document references concrete trajectory paths and agent README files for every claim",
+        "A short 'lessons for the next research umbrella' section identifies which harness pieces should be kept, replaced, or extended",
+        "Document is reproducible: every number in it is regenerable from runs/ via `make report`",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 25,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
