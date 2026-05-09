@@ -1,0 +1,12 @@
+id: click-first-link-py
+language: python
+summary: |
+  Cross-language reference / contract-demo agent. Same behaviour as
+  agents/click-first-link, but executed via the Python stdio JSON-RPC bridge
+  (gba_agent.runner). Used by US-002's python_bridge contract test.
+approach_keywords:
+  - trivial
+  - click_first
+  - reference
+  - cross_language
+distinct_from: []

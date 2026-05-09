@@ -18,8 +18,13 @@ smoke:
 typecheck:
 	npm run --silent typecheck
 
-test:
+test: test-ts test-py
+
+test-ts:
 	npm run --silent test
+
+test-py:
+	uv run --quiet pytest -q
 
 eval:
 	@echo "==> make eval AGENT=$(AGENT) SLICE=$(SLICE) SEEDS=$(SEEDS)"

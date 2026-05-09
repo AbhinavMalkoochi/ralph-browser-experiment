@@ -72,6 +72,33 @@ WebSocket against the target page, navigates to `about:blank`, then exits 0.
 On exit it kills the Chrome process and removes the temp `--user-data-dir` so
 no orphan processes or profile dirs are left behind.
 
+## Agent contract (US-002)
+
+A complete agent implements one method:
+
+```ts
+class MyAgent extends Agent {
+  readonly id = "my-agent";
+  async run(goal: string, browser: BrowserSession, budget: Budget, ctx: AgentContext): Promise<Trajectory> { ... }
+}
+```
+
+The harness hands the agent a per-task `BrowserSession` (CDP wrapper), a
+`Budget` enforcing tokens/$/wall/steps, and an `AgentContext` carrying
+`{task_id, seed, runs_root}`. The agent constructs a `Trajectory` via
+`Trajectory.open(...)`, appends one `TrajectoryStep` per action, and ends
+with `trajectory.finish({terminal_state, verifier_verdict?, decline_reason?})`.
+Trajectories are written as JSONL to
+`runs/<agent>/<task>/<seed>/trajectory.jsonl` and gzipped to
+`trajectory.jsonl.gz` on completion. The presence of the `.gz` file is the
+done-marker the resumable tournament runner (US-010) uses.
+
+Cross-language agents are supported via the `gba_agent` Python package and
+`PythonAgentBridge`: the harness spawns
+`python -m gba_agent.runner --agent <path>` and proxies browser/budget/
+trajectory calls over line-delimited JSON-RPC 2.0 on stdio. See
+`agents/click-first-link-py/` for the reference Python agent.
+
 ## Per-task budgets
 
 | Slice  | tokens | $    | wall_s | steps |

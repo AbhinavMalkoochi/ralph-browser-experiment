@@ -36,8 +36,8 @@
         "Tests pass"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented at harness/ts/agent/{types,agent,trajectory,browser_session,python_bridge}.ts and harness/python/gba_agent/. Trajectory JSONL has 3 line kinds (meta/step/end), gzipped to .jsonl.gz on finish. CdpBrowserSession is the minimal implementation; US-003 will replace it with a pool. Python agents subclass gba_agent.Agent and run under `python -m gba_agent.runner`. Reference agents at agents/click-first-link (TS) and agents/click-first-link-py (Python). 10 TS tests + 3 Python tests all passing."
     },
     {
       "id": "US-003",

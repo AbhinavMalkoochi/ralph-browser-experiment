@@ -1,0 +1,12 @@
+id: click-first-link
+language: typescript
+summary: |
+  Reference / contract-demo agent. On any page it queries every <a> href via
+  Runtime.evaluate, records it as a single observation, and either clicks the
+  first one (DONE) or declines if there are none (DECLINED). Used by the
+  US-002 contract test; not intended to win tournaments.
+approach_keywords:
+  - trivial
+  - click_first
+  - reference
+distinct_from: []

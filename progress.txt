@@ -9,6 +9,8 @@ Started: Fri May  8 09:48:39 PM CDT 2026
 - TS: target ES2023, module ES2022, moduleResolution `bundler`. Use `.js` extensions in
   relative imports (TS rewrites them at build, tsx accepts them at run).
 - TS tests: `node --test --import tsx harness/ts/tests/*.test.ts` (no jest, no vitest).
+- TS strict mode includes `noUncheckedIndexedAccess`: `arr[0]` is `T | undefined`.
+  Cast at the boundary (`arr[0] as string`) or guard with `if (!x) ...`.
 - CDP: do NOT pull in `chrome-remote-interface` or `puppeteer`. Node 22+ has global
   WebSocket and fetch — `harness/ts/cdp/{launch,client}.ts` is enough. Chrome is at
   `/usr/bin/google-chrome` (143). Override with `GBA_CHROME_PATH`.
@@ -17,9 +19,31 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   it on close. Headless flag is `--headless=new`.
 - Process hygiene: every Chrome handle MUST expose a `close()` that SIGTERM-then-SIGKILLs
   the child and `rm -rf`s the user-data-dir. Tests assert this.
-- Makefile: `make install` runs `npm install` + `uv sync`. `make smoke` is the only
-  fully-wired target as of US-001; eval/tournament/report are stubs that print the
-  story they will be implemented under.
+- Agent contract (US-002): `harness/ts/agent/{types,agent,trajectory,browser_session,python_bridge}.ts`.
+  Every agent extends `Agent`, owns its `Trajectory`, opens it via
+  `Trajectory.open({runsRoot,agent,task,seed},{agent_id,task_id,seed})`,
+  and ends with `finish({terminal_state, verifier_verdict?, decline_reason?})`.
+  Trajectories are JSONL `meta`/`step`/`end` lines, gzipped to `trajectory.jsonl.gz`
+  on finish. The .gz is the done-marker for the resumable runner (US-010).
+- Cross-language agents: TS spawns `python -m gba_agent.runner --agent <path>` via
+  `PythonAgentBridge` (`harness/ts/agent/python_bridge.ts`). Protocol is line-delimited
+  JSON-RPC 2.0 over stdio; `runPythonAgent(...)` registers browser/budget/trajectory
+  RPC handlers and awaits a single `agent.run` call. Python proxies live in
+  `harness/python/gba_agent/` and use stdlib only.
+- Python: `harness/python/gba_agent/` is on PYTHONPATH via pyproject's
+  `[tool.pytest.ini_options].pythonpath` for tests, and via env var set by
+  `PythonAgentBridge.spawn` for the runner. No pip install needed.
+- Python rpc.py: inbound RPC handlers MUST run on a worker thread so they may
+  issue their own `rpc.call(...)` back to the peer without deadlocking the
+  reader. Already handled inside `_dispatch_request`.
+- Tests: `make test` now runs both `npm test` (TS) and `uv run pytest` (Python).
+  TS tests under `harness/ts/tests/*.test.ts`; Python tests under
+  `harness/python/tests/test_*.py`.
+- BrowserSession.evaluate: `Runtime.evaluate` returns a result whose shape can
+  contain `exceptionDetails` if the page expression throws. Always check that and
+  re-raise; otherwise the caller silently sees `undefined` for thrown evaluations.
+- Makefile: `make install` runs `npm install` + `uv sync`. `make smoke` is wired,
+  `make test` is wired (US-002). eval/tournament/report still stubs (US-009..U-011).
 ---
 
 ## 2026-05-08 - US-001
@@ -56,4 +80,80 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     landing US-009/US-010/US-011, the CLI entry points already exist at
     harness/ts/cli/{eval,tournament,report}.ts; replace the stub bodies, do not
     add new entry points.
+---
+
+## 2026-05-08 - US-002
+- Defined the Agent / Trajectory / BrowserSession / Budget contract in TypeScript
+  under harness/ts/agent/{types,agent,trajectory,browser_session,python_bridge}.ts.
+- Trajectory writes JSONL (meta + steps + end) and gzips to .gz on finish; the
+  raw .jsonl is removed.
+- Built a minimal CdpBrowserSession that wraps launchChrome + CdpSession with
+  navigate/evaluate/screenshot. US-003 will replace it with a pooled implementation.
+- Built a Python-side equivalent at harness/python/gba_agent/{rpc,agent,browser,
+  budget,trajectory,runner}.py. Pure stdlib (threading, queue, json, importlib).
+- Built PythonAgentBridge + runPythonAgent helper that spawns
+  `python -m gba_agent.runner --agent <path>` and exchanges JSON-RPC 2.0 over
+  stdio. browser/budget/trajectory handlers are registered TS-side.
+- Reference agents committed at agents/click-first-link/{agent.ts,manifest.yaml,
+  README.md} (TS) and agents/click-first-link-py/{agent.py,manifest.yaml,
+  README.md} (Python).
+- Tests:
+  - harness/ts/tests/trajectory.test.ts (3 tests) — JSONL format, gzip on finish,
+    addStep-after-finish error, idempotent finish.
+  - harness/ts/tests/agent.test.ts (3 tests) — TS trivial agent on about:blank
+    (DECLINED), on a 2-link data: URL (DONE), tight-budget (BUDGET_EXCEEDED).
+  - harness/ts/tests/python_bridge.test.ts (2 tests) — Python trivial agent over
+    the bridge with a fake browser (no Chrome), DECLINED + DONE branches.
+  - harness/python/tests/test_rpc.py (2 tests) — bidirectional StdioJsonRpc round
+    trip and handler-can-callback-during-request (deadlock regression test).
+  - harness/python/tests/test_runner.py (1 test) — load_agent_class finds the
+    trivial Python agent's class.
+- pyproject.toml: added pythonpath=["harness/python"] so pytest can import
+  gba_agent without packaging it.
+- Makefile: split `make test` into `test-ts` + `test-py`, both invoked by `test`.
+- README.md: added Agent contract section + cross-language note.
+- Quality checks: `npm run typecheck` clean; `npm test` 10/10 passing in ~18s
+  (3 of those launch real Chrome, the rest are pure-Node); `uv run pytest -q`
+  3/3 passing in <1s. Python bridge tests do NOT spawn Chrome (use a
+  FakeBrowserSession), so they remain fast.
+- Cleaned up stale __pycache__ left under agents/trivial_py and harness/python
+  by a prior aborted iteration; the new layout uses agents/click-first-link-py.
+- Files changed/added: harness/ts/agent/{types,agent,trajectory,browser_session,
+  python_bridge}.ts, harness/ts/tests/{trajectory,agent,python_bridge}.test.ts,
+  harness/python/gba_agent/{__init__,rpc,agent,browser,budget,trajectory,runner}.py,
+  harness/python/tests/{__init__,test_rpc,test_runner}.py,
+  agents/click-first-link/{agent.ts,manifest.yaml,README.md},
+  agents/click-first-link-py/{agent.py,manifest.yaml,README.md},
+  agents/CLAUDE.md, pyproject.toml, Makefile, README.md, progress.txt, prd.json.
+- **Learnings for future iterations:**
+  - The trajectory file path is the resumability marker: presence of
+    `runs/<agent>/<task>/<seed>/trajectory.jsonl.gz` means "done". US-010 should
+    treat it that way and skip the cell.
+  - Don't put `close()` on the BrowserSession interface — lifecycle is harness-
+    owned (the pool in US-003 hands sessions out and reclaims them). The concrete
+    class can have it (CdpBrowserSession.close), but agents shouldn't call it.
+  - When TS strict mode (`noUncheckedIndexedAccess`) makes `links[0]` typed
+    `string | undefined`, prefer `links[0] as string` after a length check rather
+    than introducing a temporary variable + null guard.
+  - Page.navigate resolves immediately. We poll `document.readyState` in
+    BrowserSession.navigate to wait for "interactive" or "complete" before
+    returning. The minimal CDP client doesn't subscribe to events, which keeps
+    the wire simple at the cost of the polling loop.
+  - Runtime.evaluate's `exceptionDetails` field MUST be checked — if a page
+    expression throws, you get a non-error response with that field set, not a
+    wire-level error. CdpBrowserSession.evaluate re-raises so agents see real
+    failures.
+  - Python rpc.py's reader must dispatch inbound requests to a worker thread, or
+    a handler that calls back into the peer (e.g. trajectory.add_step needs no
+    callback, but browser.evaluate from inside an agent.run handler does)
+    deadlocks. test_handler_can_call_back_during_request guards this.
+  - Cross-language agents are expensive only because of `python` startup
+    (~150ms). Subsequent RPC calls are cheap (~1ms each over a local pipe).
+    Don't spawn a fresh bridge per RPC; reuse one bridge per `agent.run`.
+  - The Python runner blocks on `rpc.join()` after agent.run completes; the TS
+    bridge calls `child.stdin.end()` to send EOF, the reader returns, and
+    `main()` exits cleanly. Do not add any other shutdown signal.
+  - There are now TWO trivial reference agents (TS + Python). Future tournament
+    code should be free to skip them via a manifest tag if we don't want them
+    polluting leaderboards. Keeping both gives US-013+ a contract-test substrate.
 ---

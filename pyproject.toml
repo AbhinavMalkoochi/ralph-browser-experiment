@@ -14,6 +14,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["harness/python/tests"]
 python_files = ["test_*.py"]
+pythonpath = ["harness/python"]
 
 [tool.ruff]
 target-version = "py313"
