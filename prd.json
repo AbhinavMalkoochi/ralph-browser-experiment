@@ -54,8 +54,8 @@
         "Tests pass"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented at harness/ts/cdp/pool.ts. BrowserPool.create({size}) (default 4 / GBA_POOL_SIZE) launches N chromes upfront, each with its own --user-data-dir; acquire/release destroys+respawns the slot for true isolation. PooledBrowserSession adds snapshot()/restore() (URL + Network cookies + local/sessionStorage; optional MHTML audit payload via Page.captureSnapshot). pool.withSession(fn,{taskTimeoutMs}) SIGKILLs on deadline and throws SessionTimeoutError; agents map to terminal_state=SESSION_TIMEOUT. Crash-only: chrome exit handler replaces wedged slots without taking the pool down. Chrome is spawned detached:true and killed via process group (process.kill(-pid)) to prevent renderer subprocesses from racing the rm cleanup; this also fixed a pre-existing flake in smoke.test.ts. 21 TS tests (11 new in pool.test.ts) all pass; 3 Python tests still pass."
     },
     {
       "id": "US-004",

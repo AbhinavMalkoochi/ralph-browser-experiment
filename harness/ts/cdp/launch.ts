@@ -52,10 +52,18 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<ChromeHand
     flags.splice(flags.indexOf("--headless=new"), 1);
   }
 
+  // detached: true puts chrome in its own process group (pgid == child.pid)
+  // so we can SIGKILL the whole group on close. Chrome spawns renderer / GPU /
+  // network-service subprocesses that, in the default group, would keep writing
+  // into --user-data-dir after the parent exits and race with our rm cleanup.
+  // Killing the group reaps every descendant in one shot.
   const child = spawn(chromePath, flags, {
     stdio: ["ignore", "pipe", "pipe"],
-    detached: false,
+    detached: true,
   });
+  // We don't want chrome to receive node's SIGINT / Ctrl-C *unless* we're done.
+  // detached=true would normally let it survive a parent exit; we still ref the
+  // process so node waits for it, but we never call .unref().
 
   let stderr = "";
   let resolved = false;
@@ -98,21 +106,51 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<ChromeHand
 
   const close = async (): Promise<void> => {
     await killChild(child);
-    await rm(userDataDir, { recursive: true, force: true });
+    // Chrome's renderer/network/GPU subprocesses can briefly outlive the
+    // parent process and keep writing into the profile dir, so a single rm
+    // race-loses with ENOTEMPTY/EBUSY under load (the pool test slams 8
+    // chromes into ~5s). Node's rm retries linearly on those errors when
+    // maxRetries>0; 5 retries × 100ms (linear backoff) is plenty.
+    await rm(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   };
 
   return { process: child, port, userDataDir, close };
 }
 
 async function killChild(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGTERM");
+  if (child.exitCode !== null || child.signalCode !== null) {
+    // Parent already dead (e.g. external SIGKILL in the crash-replace test).
+    // Descendants may still be alive in the group — nuke them so cleanup
+    // sees a quiescent profile dir.
+    killGroup(child, "SIGKILL");
+    return;
+  }
+  // Send SIGTERM to the whole process group (negative pid) so chrome's
+  // subprocesses (renderer, GPU, network) die together with the parent.
+  killGroup(child, "SIGTERM");
   const exited = await Promise.race([
     new Promise<boolean>((resolve) => child.once("exit", () => resolve(true))),
     delay(3_000).then(() => false),
   ]);
   if (!exited) {
-    child.kill("SIGKILL");
+    killGroup(child, "SIGKILL");
     await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  }
+}
+
+function killGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  const pid = child.pid;
+  if (pid == null) return;
+  try {
+    // Negative pid targets the process group whose pgid == pid. This works
+    // because we spawned with detached:true, which set pgid=pid.
+    process.kill(-pid, signal);
+  } catch {
+    // Group may already be gone; fall back to direct kill on the parent.
+    try {
+      child.kill(signal);
+    } catch {
+      /* already dead */
+    }
   }
 }

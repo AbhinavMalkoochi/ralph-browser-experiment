@@ -11,6 +11,7 @@ import {
   type BrowserSession,
   type Budget,
 } from "../../harness/ts/agent/types.js";
+import { SessionTimeoutError } from "../../harness/ts/cdp/pool.js";
 
 export default class ClickFirstLinkAgent extends Agent {
   readonly id = "click-first-link";
@@ -79,6 +80,13 @@ export default class ClickFirstLinkAgent extends Agent {
       if (err instanceof BudgetExceeded) {
         await trajectory.finish({
           terminal_state: "BUDGET_EXCEEDED",
+          decline_reason: err.message,
+        });
+        return trajectory;
+      }
+      if (err instanceof SessionTimeoutError) {
+        await trajectory.finish({
+          terminal_state: "SESSION_TIMEOUT",
           decline_reason: err.message,
         });
         return trajectory;

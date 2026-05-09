@@ -99,6 +99,47 @@ Cross-language agents are supported via the `gba_agent` Python package and
 trajectory calls over line-delimited JSON-RPC 2.0 on stdio. See
 `agents/click-first-link-py/` for the reference Python agent.
 
+## Browser pool (US-003)
+
+`harness/ts/cdp/pool.ts` exposes `BrowserPool` — N parallel Chrome processes,
+each with its own `--user-data-dir` for true profile isolation (cookies,
+localStorage, IndexedDB, service workers, HTTP cache). Pool size defaults to
+4, overridable via `GBA_POOL_SIZE` or `BrowserPool.create({size})`.
+
+```ts
+import { BrowserPool } from "./harness/ts/cdp/pool.js";
+const pool = await BrowserPool.create({ size: 4, defaultTaskTimeoutMs: 60_000 });
+try {
+  await pool.withSession(
+    async (session) => {
+      await session.navigate("https://example.com");
+      const snap = await session.snapshot();              // URL + cookies + storage
+      // ... agent does work ...
+      await session.restore(snap);                         // rollback
+    },
+    { taskTimeoutMs: 30_000 },
+  );
+} finally {
+  await pool.close();
+}
+```
+
+- Each `acquire()`/`release(session)` cycle destroys the slot's Chrome and
+  spawns a fresh one. Isolation is the contract; ~1s spawn cost per task is
+  the price.
+- `pool.withSession(fn, {taskTimeoutMs})` enforces a wall-clock deadline. On
+  expiry the session is `SIGKILL`ed and the inflight call rejects with
+  `SessionTimeoutError`; agents map that to `terminal_state="SESSION_TIMEOUT"`.
+- The pool is crash-only: a wedged Chrome (renderer hang, OOM, external
+  `kill`) is detected via the process exit event and the slot is replaced
+  without taking the harness down.
+- Snapshots capture URL + cookies (via `Network.getAllCookies`) +
+  local/sessionStorage. Pass `{includeMhtml:true}` for an audit DOM payload
+  (`Page.captureSnapshot`); MHTML is *not* replayed by `restore()` — restore
+  reconstitutes state, not arbitrary DOM.
+- Chrome is spawned `detached:true` and killed via process group so renderer /
+  GPU / network subprocesses die before we `rm -rf` the profile dir.
+
 ## Per-task budgets
 
 | Slice  | tokens | $    | wall_s | steps |

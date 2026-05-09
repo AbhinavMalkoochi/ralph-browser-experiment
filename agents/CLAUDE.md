@@ -29,8 +29,17 @@ export default class MyAgent extends Agent {
 The agent owns the `Trajectory`: open it with
 `Trajectory.open({runsRoot: ctx.runs_root, agent: this.id, task: ctx.task_id, seed: ctx.seed}, {agent_id, task_id, seed})`,
 append steps with `addStep`, finish with `finish({terminal_state, ...})`.
-Handle `BudgetExceeded` thrown by `budget.check()` and finish the trajectory
-with `terminal_state="BUDGET_EXCEEDED"` so the harness records it correctly.
+
+Catch these errors in your `run()` and finish the trajectory accordingly:
+
+- `BudgetExceeded` (from `harness/ts/agent/types.js`) → `terminal_state="BUDGET_EXCEEDED"`.
+  Thrown by `budget.check()` when any axis (tokens / usd / wall_seconds / steps)
+  is exceeded.
+- `SessionTimeoutError` (from `harness/ts/cdp/pool.js`) → `terminal_state="SESSION_TIMEOUT"`.
+  Thrown by `BrowserSession` methods when the pool's per-task wall-clock
+  deadline fires; the underlying Chrome has been SIGKILLed and any further
+  CDP calls will fail. Don't try to recover — finish and exit.
+- Anything else → `terminal_state="ERROR"` with the message as `decline_reason`.
 
 ### Python agents
 

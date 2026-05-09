@@ -44,6 +44,25 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   re-raise; otherwise the caller silently sees `undefined` for thrown evaluations.
 - Makefile: `make install` runs `npm install` + `uv sync`. `make smoke` is wired,
   `make test` is wired (US-002). eval/tournament/report still stubs (US-009..U-011).
+- BrowserPool (US-003) at `harness/ts/cdp/pool.ts`. Use `BrowserPool.create({size})`
+  (default 4 / GBA_POOL_SIZE) then `pool.acquire()` / `pool.release(s)` or
+  `pool.withSession(fn, {taskTimeoutMs})`. Each acquire/release destroys-and-
+  respawns the slot so isolation is the contract (cookies/localStorage/cache
+  are guaranteed fresh). Wall-clock deadline throws `SessionTimeoutError`
+  out of session methods; agents must catch it and finish trajectories with
+  `terminal_state="SESSION_TIMEOUT"` (see agents/CLAUDE.md).
+- Chrome is spawned `detached:true` (own pgid) and killed via process group
+  (`process.kill(-pid, sig)`) so renderer / GPU / network subprocesses die
+  before `rm -rf` the user-data-dir. Without this, rm races ENOTEMPTY/EBUSY.
+- snapshot/restore on PooledBrowserSession captures URL + cookies (Network.
+  getAllCookies) + local/sessionStorage; restore clears, sets cookies, navigates,
+  then replays storage. Pass {includeMhtml:true} for an audit DOM payload via
+  Page.captureSnapshot — MHTML is NOT replayed by restore (audit only).
+- Pool internals are stored in a module-level WeakMap keyed by session.
+  release() does NOT delete the WeakMap entry: safeCdp() needs to read
+  `deadlineHit` when the WS-close event fires AFTER release returns, so it
+  can convert a "CDP session closed" rejection into SessionTimeoutError.
+  Once the agent drops its session reference, GC reclaims the entry.
 ---
 
 ## 2026-05-08 - US-001
@@ -156,4 +175,95 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   - There are now TWO trivial reference agents (TS + Python). Future tournament
     code should be free to skip them via a manifest tag if we don't want them
     polluting leaderboards. Keeping both gives US-013+ a contract-test substrate.
+---
+
+## 2026-05-08 - US-003
+- Implemented `BrowserPool` + `PooledBrowserSession` at harness/ts/cdp/pool.ts.
+  Pool spawns N Chromes upfront (each with its own --user-data-dir), hands
+  out sessions via acquire(), destroys+respawns on release for true isolation.
+- snapshot()/restore() on PooledBrowserSession round-trips URL + cookies
+  (Network.getAllCookies/setCookies) + local/sessionStorage. Optional MHTML
+  audit payload via Page.captureSnapshot.
+- Per-task hard timeout: `pool.withSession(fn, {taskTimeoutMs})` SIGKILLs
+  the slot's chrome on expiry and throws a typed SessionTimeoutError; agent
+  catch maps to terminal_state=SESSION_TIMEOUT.
+- Crash-only design: chrome.process exit handler detects wedged/external
+  kills; if the slot was idle, replacement spawns in background; if in-use,
+  release() already does the destroy+respawn.
+- Switched chrome spawn to `detached:true` and added killGroup() in
+  harness/ts/cdp/launch.ts so renderer/GPU/network subprocesses die with
+  the parent (ate ENOTEMPTY rm races on the smoke + pool tests). Added
+  maxRetries:5,retryDelay:100 on rm as belt-and-braces for any straggler.
+- Updated agents/click-first-link/agent.ts to catch SessionTimeoutError →
+  SESSION_TIMEOUT (was falling through to ERROR).
+- Tests at harness/ts/tests/pool.test.ts cover all 6 AC bullets plus a
+  trajectory-records-SESSION_TIMEOUT integration test:
+  - pool.size honours opts.size; envSize() reads/validates GBA_POOL_SIZE
+  - acquire() blocks on empty pool, wakes on release
+  - each slot has unique --user-data-dir; both removed after release
+  - two sessions are isolated for cookies + localStorage; fresh session
+    sees neither after both releases
+  - snapshot then restore round-trips URL/cookies/localStorage/sessionStorage,
+    overwriting interim mutations
+  - SIGKILL on chrome.pid triggers replacement; pool stays up; subsequent
+    acquire returns a healthy session with a new pid
+  - idle-slot crash is detected and replaced in the background
+  - withSession({taskTimeoutMs:250}, neverResolves) rejects with
+    SessionTimeoutError; replaced count increments
+  - hang-agent finishes trajectory with terminal_state=SESSION_TIMEOUT
+  - 8 parallel agents on pool size 4 each see only their own cookie/ls;
+    pool.stats().replaced >= 8 (one per task release)
+- README.md: added "Browser pool (US-003)" section with example.
+- agents/CLAUDE.md: documented SessionTimeoutError handling alongside
+  BudgetExceeded.
+- Files changed/added: harness/ts/cdp/pool.ts (new), harness/ts/cdp/launch.ts
+  (detached spawn + killGroup), harness/ts/tests/pool.test.ts (new),
+  agents/click-first-link/agent.ts (SessionTimeoutError catch), README.md,
+  agents/CLAUDE.md, progress.txt, prd.json.
+- Quality checks: `npm run typecheck` clean; `npm test` 21/21 (5 of which
+  spawn real Chrome under the pool, plus the pre-existing 8 chrome-driven
+  agent/smoke tests). `uv run pytest -q` 3/3. Verified across 3 consecutive
+  runs to rule out flake. /tmp/gba-chrome-* dirs all cleaned post-run.
+- **Learnings for future iterations:**
+  - WeakMap entries indexed by Session objects MUST NOT be deleted in
+    release(). The pool's safeCdp() runs LATER (after the WS close event
+    fires from chrome's exit, on a subsequent I/O tick) and needs to read
+    `deadlineHit` to wrap "CDP session closed" into SessionTimeoutError.
+    Synchronously deleting in release() causes a race that downgrades the
+    error to a generic Error. GC reclaims the entry once the agent drops
+    its session reference — no leak.
+  - Chrome MUST be spawned `detached:true` so we can SIGKILL its whole
+    process group (`process.kill(-pid, signal)`). Without this, the
+    renderer/GPU/network subprocesses keep writing into --user-data-dir
+    after the parent dies and `rm -rf` races with ENOTEMPTY / EBUSY. This
+    fixed both the new pool test AND a pre-existing flake in
+    smoke.test.ts ("temp user-data-dir is removed on close").
+  - When the parent chrome is already dead (e.g. external SIGKILL in the
+    crash-replace test), still call killGroup(SIGKILL) before rm — group
+    members survive the leader. killChild() now does this.
+  - Acquire/release-then-respawn is the only reliable way to guarantee FR-4
+    isolation without a per-slot scrub script that future agents would
+    forget. ~1s spawn cost is acceptable for the research harness.
+  - `Network.enable` MUST be sent at slot init for snapshot/restore (cookie
+    domain methods are gated on it). Page.enable alone is not enough.
+  - Cookies don't persist on data: URLs (opaque origin), so any pool
+    snapshot/restore test needs an http origin. The test file spins up a
+    tiny http.createServer per test on 127.0.0.1:0 and tears it down at
+    the end. Pattern: `startFixtureServer()` returning {origin,url(),close()}.
+  - `assert.rejects(() => stat(dir), /ENOENT/)` is the right assertion for
+    "this directory was removed". stat() throws an Error whose .message
+    starts with "ENOENT: no such file or directory, stat '...'" — the
+    regex matches.
+  - rm({maxRetries:5, retryDelay:100}) is a useful safety net even with
+    pgid-killing — keep it. Linear backoff on EBUSY/ENOTEMPTY/EMFILE/etc.
+  - Pool wakeWaiter() runs in a tight while-loop pairing waiters with
+    idle slots; safe because both arrays mutate synchronously inside the
+    loop. Don't add awaits inside that loop or you'll get double-wakes.
+  - PooledBrowserSession exposes `userDataDir` and `pid` getters (read
+    through the WeakMap). Useful for tests; agents shouldn't need them
+    in normal operation but they don't leak anything sensitive.
+  - The hang-agent test had to await its inner trajectory-write Promise
+    AFTER the outer `pool.withSession` race rejected — otherwise the .gz
+    file might still be in flight when the test asserts on it. Pattern
+    captured in `runHangAgent` helper inside pool.test.ts.
 ---
