@@ -501,6 +501,52 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   coordinate-grid overlays (preserves it but reframes the agent),
   or purpose-trained GUI models (CogAgent, OS-Atlas) plumbed in via
   a new LLMClient provider.
+- Network-shadow agent (US-019) at agents/network-shadow/. Mechanism:
+  installs a fetch + XMLHttpRequest monkey-patch via BOTH
+  Page.addScriptToEvaluateOnNewDocument (covers future docs/popups) and
+  Runtime.evaluate (covers the already-loaded doc since the harness
+  navigates to start_url before agent.run()). Every request the page
+  or the agent makes lands on window.__gba_net_log capped at 60 entries.
+  LLM action vocabulary is HTTP-first: `fetch(method, url, body?,
+  content_type?)` executed IN-PAGE so cookies+origin are preserved, plus
+  click/navigate/wait/done/decline as fallbacks. Distinct from every
+  prior slot on TWO axes (observation = network traffic; action = HTTP
+  requests). Live results: 21/22 easy, 3/10 hard (shadow-form,
+  recoverable, modal-stack).
+- Monkey-patch idempotency: every install path MUST guard with a
+  window-level `__installed` flag before re-wrapping
+  fetch/XMLHttpRequest, or a second install will wrap the wrapped
+  function and every request gets logged twice. installPatch() also
+  has to tolerate failures from Page.addScriptToEvaluateOnNewDocument
+  (the Page domain may not be enabled depending on session lifecycle)
+  AND Runtime.evaluate (opaque origins / about:blank). Both calls are
+  wrapped in try/catch with silent swallow — the patch is best-effort
+  and reinstalls automatically on every navigate action.
+- XHR monkey-patch detail: when wrapping XMLHttpRequest, copy the
+  prototype AND the constructor's own properties via
+  Object.setPrototypeOf(Patched, Orig). Without the prototype copy
+  pages that pass an XHR instance to `instanceof XMLHttpRequest`
+  check (e.g. libraries that detect "is this a real XHR") will
+  return false and bail. Tested by leaving the existing fixtures-
+  page fetch logic intact and asserting all requests still complete.
+- "Trigger UI to discover the endpoint" pattern: when the LLM doesn't
+  yet know the endpoint behind a form, it can `click(button#submit)`
+  to make the PAGE issue its own fetch, see it in the log, and then
+  on the next turn replay or manipulate that request. This is the
+  network-shadow agent's recovery path for pages whose endpoints are
+  not visible in form action="" attributes (e.g. JS-only submitters,
+  shadow-rooted forms). The agent picked this strategy in trajectory
+  runs/network-shadow/hard-shadow-form/0/ — first click bounced because
+  the shadow root wasn't reachable, but the page's wrapping JS made
+  the right call which then showed up in the log; the agent replayed
+  the POST directly on the next turn and won.
+- Action substrate "HTTP requests" matters distinctly from "CSS
+  selectors". The win on hard-shadow-form proves the design: the
+  shadow root is irrelevant once the agent can see the endpoint, and
+  the endpoint is same-origin so cookies+CSRF (if any) come along
+  for the ride. Future "skill library" or "memory" agents could
+  cache the request shape per (host, goal-template) for replay
+  across tasks — that's beyond US-019 but a natural extension.
 ---
 
 ## 2026-05-08 - US-001
@@ -2367,4 +2413,136 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     a coordinate grid overlay, or (c) plumb in a purpose-trained
     GUI model. AC #4's "OR documented failure analysis" branch is
     the right shipping path for un-augmented vision today.
+---
+
+## 2026-05-10 - US-019
+- Shipped sixth novel agent: agents/network-shadow/. Mechanism: a
+  fetch + XMLHttpRequest monkey-patch installed via BOTH
+  Page.addScriptToEvaluateOnNewDocument and Runtime.evaluate
+  records every page-issued and agent-issued HTTP request into
+  window.__gba_net_log. Each step the LLM sees the network-log
+  tail alongside a minimal page summary and emits one of: fetch
+  (executed in-page so cookies+origin are preserved), click,
+  navigate, wait, done, decline. The action substrate is HTTP
+  requests, not DOM selectors or pixel coords — the agent treats
+  the page as the surface of an HTTP API and uses UI clicks only
+  as a last-resort trigger to make the page reveal its own
+  endpoints.
+- Distinct on TWO axes from every prior slot:
+  * Observation modality: network traffic (this) vs DOM/a11y
+    (baseline, plan-then-execute, runtime-codegen, speculative-
+    rollback, predicate-driven) vs pixels (vision-grounded).
+  * Action substrate: HTTP fetch (this) vs aids (baseline) vs
+    text selectors (plan-then-execute) vs raw JS bodies
+    (runtime-codegen) vs CSS selectors (speculative-rollback,
+    predicate-driven) vs pixel coords (vision-grounded).
+  approach_keywords = [network_introspection, api_first,
+  http_actions, traffic_logging, request_replay,
+  fetch_xhr_monkeypatch]; Jaccard=0 with every prior agent's
+  keywords (tested explicitly in the manifest distinctness test).
+- Files: agent.ts (Agent subclass + loop + message builder),
+  actions.ts (action union + tolerant parser + in-page executors,
+  with executeAction emitting a small async-IIFE for fetch that
+  resolves to {ok, status, body, content_type}), network.ts
+  (the monkey-patch source as a string template, install/read/clear
+  helpers; idempotency guard via window.__gba_net_installed), and
+  observe.ts (compact page summary — URL, title, text snippet,
+  forms with action+method+field names, visible buttons with CSS
+  selector_hints). Tests: harness/ts/tests/network_shadow_agent.test.ts
+  (27 new — parseAction for all 6 actions + tolerance/error paths,
+  actionLabel rendering, installPatch on a real HTTP origin
+  capturing a page-issued POST, idempotent double-install, opaque-
+  origin no-throw, executeAction fetch round-trip + click + wait,
+  end-to-end runs with scripted LLM covering fetch+done DONE path,
+  parse_error mid-loop recovery, no-LLM DECLINED, tight-budget
+  BUDGET_EXCEEDED, manifest distinctness vs ALL six prior agents).
+- Live results (gpt-4o-mini, temperature=0):
+   * Easy slice: 21/22 PASS in 141.8s. Only easy-httpbin-form
+     fails — same labelless-input form that defeats plan-then-
+     execute. The agent's UI fallback (`click`) lacks the label-
+     finder semantics needed; future iterations could either add
+     a structural label hint to observe.ts or rely on the network
+     log + form action attribute to compose the right POST.
+   * Hard slice: 3/10 PASS in 88.0s — hard-modal-stack,
+     hard-recoverable, hard-shadow-form. The shadow-form win is
+     the canonical API-first result: the agent POSTed JSON
+     directly to /__shadow/submit without ever traversing the
+     shadow DOM. Recoverable wins via the loop's natural retry
+     after a 500. Modal-stack wins because the LLM clicks the
+     correct buttons in order; the network log carries no signal
+     for this fixture (no server endpoint) but the agent doesn't
+     need one.
+- Both AC thresholds met with margin (≥3/20 easy, ≥1/10 hard).
+- The 7 hard failures are mostly substrate-bound or LLM-bound,
+  not loop-bound:
+   * canvas-drag / iframe-drag: verifier checks window.__test, not
+     a server endpoint — no API to short-circuit to.
+   * conditional-form: server cross-checks the conditional path
+     against the goal text; the agent needs to compose the right
+     JSON body but the LLM produced an incomplete payload before
+     bailing.
+   * multi-tab: the popup is in a different document the agent's
+     CDP session is not attached to; same constraint as srb.
+     The /__multitab/report endpoint IS visible in the log if the
+     agent does the popup-trigger click first, but the agent
+     declined before issuing it.
+   * late-hydration: requires waiting for a hydration window; the
+     agent's wait-then-fetch path was correct but the predicate
+     for "did the submission stick" wasn't framed well by the LLM.
+   * pdf-task: requires fetching binary PDF bytes and regex-
+     extracting the answer; the agent's fetch path returned the
+     bytes (as latin1) but the LLM gave up before parsing them.
+   * virtual-scroll: requires scrolling past 200 rows to find an
+     item; no API shortcut — the fixture's click endpoint takes
+     an id but the LLM never enumerated ids.
+- Trajectories at runs/network-shadow/{easy-*,hard-*}/0/trajectory.
+  jsonl.gz (gitignored per US-013..U-018 precedent).
+- Files changed: agents/network-shadow/{agent,actions,network,
+  observe}.ts + agents/network-shadow/{manifest.yaml,README.md} +
+  harness/ts/tests/network_shadow_agent.test.ts + agents/CLAUDE.md
+  (Novel agents section) + prd.json + progress.txt.
+- Quality checks: `npm run typecheck` clean; `npm test` all pass
+  (added 27 new tests for network-shadow); `uv run pytest -q` 7/7.
+- **Learnings for future iterations:**
+  - Monkey-patches installed via Page.addScriptToEvaluateOnNewDocument
+    cover EVERY future document the renderer creates (page
+    navigations + popups). To also cover the CURRENT document
+    (which the harness has already navigated before agent.run()),
+    a parallel Runtime.evaluate install is required. Both calls
+    MUST tolerate failure (the Page domain may not be enabled,
+    the current document may be opaque-origin) — wrap in try/catch
+    and silently swallow. The patch will reinstall itself on every
+    navigate action so a single failure isn't fatal.
+  - Idempotency for window-level patches is non-negotiable. Set a
+    `window.__patch_installed = true` flag at the top of the IIFE
+    and short-circuit if already true. A second install on a
+    wrapped fetch produces a wrapper-of-a-wrapper that logs every
+    request twice.
+  - When patching XMLHttpRequest, copy prototype AND own properties:
+    PatchedXhr.prototype = OrigXhr.prototype + Object.setPrototypeOf
+    (Patched, Orig). Pages that do `xhr instanceof XMLHttpRequest`
+    will fail without the prototype copy. The fixtures-server
+    fetch path doesn't exercise this but third-party libraries
+    might.
+  - In-page fetch is the right action substrate for API-first
+    agents: cookies + same-origin auth + CSRF tokens (if any) ride
+    along automatically because the request runs in the page's
+    own JS context. Trying to issue requests from the Node side
+    (via fetch in the agent process) would lose all of that AND
+    require manually copying document.cookie.
+  - When the LLM doesn't know an endpoint, the "trigger UI to
+    discover" pattern works: click(button#submit) makes the PAGE
+    issue its own fetch, which lands in the network log; the next
+    LLM turn can replay or manipulate that request. This is the
+    agent's recovery path for forms whose action="" isn't set
+    (the JS-only submitters that dominate modern SPAs).
+  - The fixtures server's /api/buy + /api/last pattern is a nice
+    test harness for network-aware agents: a stateful endpoint
+    (records last submission) lets a unit test assert both the
+    agent's response handling AND the server-side side-effect
+    after the run.
+  - For the e2e tests, the `installPatch is idempotent` check is
+    a great regression guard. Double-installing on a real page is
+    the easiest way to trip silently into "every request shows up
+    twice in the log", which then poisons the LLM's prompts.
 ---

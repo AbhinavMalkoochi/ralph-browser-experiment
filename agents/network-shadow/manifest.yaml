@@ -1,0 +1,34 @@
+id: network-shadow
+language: typescript
+summary: |
+  Sixth novel agent (US-019). API-first browser agent. Each step the agent
+  reads a tail of the page's NETWORK TRAFFIC (every fetch and XHR is
+  recorded by a monkey-patch installed at run start AND on every new
+  document via Page.addScriptToEvaluateOnNewDocument) and the LLM emits
+  one of: a direct HTTP request (executed in-page so cookies and origin
+  are preserved), a UI click to trigger the page's own request logic, a
+  navigation, a wait, or done. Action substrate is HTTP requests, not
+  DOM selectors or pixel coordinates — the LLM treats the page as an
+  API surface and uses UI clicks only as a last-resort trigger. Distinct
+  from every prior slot on the OBSERVATION axis (network traffic vs
+  DOM / a11y / pixels) AND on the ACTION axis (HTTP requests vs DOM
+  selectors / aids / pixel coords / raw JS bodies / CSS selectors). The
+  insight: a lot of hostile UI patterns (shadow DOM forms, multi-tab
+  popups, conditional form validation, multi-attempt submits) reduce
+  to a single same-origin HTTP request once an agent can see the
+  endpoint, so an agent with DevTools-style network introspection can
+  short-circuit them entirely.
+approach_keywords:
+  - network_introspection
+  - api_first
+  - http_actions
+  - traffic_logging
+  - request_replay
+  - fetch_xhr_monkeypatch
+distinct_from:
+  - baseline-a11y-react
+  - plan-then-execute
+  - runtime-codegen
+  - speculative-rollback
+  - predicate-driven
+  - vision-grounded

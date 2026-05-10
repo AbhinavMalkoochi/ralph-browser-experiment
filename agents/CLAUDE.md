@@ -187,6 +187,29 @@ trajectory.
   `LLMMessage.content` extended to `string | LLMContentPart[]` for
   multimodal payloads, OpenAI provider gained 429-with-backoff retry
   (defaults to 5 attempts, parses "try again in Xms" hints).
+- `network-shadow/` — US-019, sixth novel slot. **API-first browser
+  agent.** A fetch + XMLHttpRequest monkey-patch is installed at run
+  start via BOTH `Page.addScriptToEvaluateOnNewDocument` (covers
+  future docs/popups) and `Runtime.evaluate` (covers the already-
+  loaded doc since the harness navigates to `start_url` before
+  `agent.run()`). Every page-issued and agent-issued request lands
+  on `window.__gba_net_log` (cap 60 entries, ~600-char body sample).
+  Each step the LLM sees a 12-entry tail alongside a minimal page
+  summary and emits one of: `fetch(method, url, body?,
+  content_type?)` (executed in-page so cookies+origin are preserved),
+  `click(selector)` (UI fallback to make the page reveal its own
+  endpoints), `navigate(url)`, `wait(ms)`, `done(reason)`,
+  `decline(reason)`. **Distinct on TWO axes** from every prior slot:
+  observation modality (network traffic vs DOM/a11y/pixels) AND
+  action substrate (HTTP requests vs aids/text/CSS-selectors/raw-JS/
+  pixel-coords). Live eval (gpt-4o-mini, temperature=0): 21/22 easy
+  in 141.8s, **3/10 hard** in 88.0s (shadow-form, recoverable,
+  modal-stack) — the shadow-form win is the canonical API-first
+  result: the agent POSTed JSON directly to `/__shadow/submit`
+  without ever traversing the shadow DOM. Patch idempotency is
+  load-bearing: a window-level `__gba_net_installed` flag
+  short-circuits double-installs; without it, a second install
+  wraps the wrapped fetch and logs every request twice.
 - `predicate-driven/` — US-017, fourth novel slot. The LLM authors a
   JS PREDICATE upfront (one synthesis call); the agent loop polls the
   predicate in-page after every action and **terminates from CODE the
