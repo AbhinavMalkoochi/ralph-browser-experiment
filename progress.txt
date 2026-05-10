@@ -245,6 +245,23 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   >=2 agents, snake seeding pairs (1 vs N), (2 vs N-1), …; odd counts
   give the top seed a bye. Use `seeding: 'alphabetical'` in tests
   where you want bracket structure independent of metric tiebreakers.
+- Markdown report (US-011) at harness/ts/report/. `make report` reads
+  runs/leaderboard.json + walks runs/<agent>/<task>/<seed>/summary.json
+  and writes docs/leaderboard.md. The report scopes itself to the
+  slices that appear in the leaderboard.json — running
+  `tournament --slice=hard` then `report` will NOT include stale
+  easy-slice summaries from prior tournament runs (filter happens in
+  generateReport after loadAllSummaries). The Pareto chart is a
+  textual list + 40x10 ASCII scatter (success_pct vs mean_cost_usd).
+  Default markdown link prefix is "../" since docs/leaderboard.md
+  sits one level below the repo root; override via --link-prefix.
+- Markdown escaping (US-011): only escape `|`, `\`, and backtick.
+  Don't escape `_`, `-`, `*`, etc. — they render fine in tables and
+  over-escaping breaks regex matchers in tests AND turns `easy-1`
+  into `easy\-1` which renders as `easy-1` but looks ugly when
+  someone greps the doc. For content INSIDE backtick code spans use
+  escapeCode (only `` ` ``); markdown treats code-span content
+  literally otherwise.
 ---
 
 ## 2026-05-08 - US-001
@@ -1256,4 +1273,95 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     desc, mean_cost_usd asc, p95_latency_ms asc). Keep these aligned
     when US-023 declares a champion — they all live in the same file
     (leaderboard.ts pickWinner / aggregate sort).
+---
+
+## 2026-05-09 - US-011
+- Implemented the markdown leaderboard report generator. `make report` now
+  reads runs/leaderboard.json + walks the per-cell summary.json sidecars
+  written by US-010 and emits docs/leaderboard.md.
+- New module: harness/ts/report/{types.ts, loadSummaries.ts, render.ts,
+  index.ts}. Public API: generateReport({runsRoot, repoRoot?, outPath?,
+  linkPrefix?}), plus the smaller renderReport / paretoFront /
+  bestTrajectoryPerAgent / computeFailureClusters / loadAllSummaries
+  helpers for testing.
+- Report sections:
+  - Per-slice ranked tables in canonical order (easy → medium → hard,
+    then any extra slices alphabetically). Columns: rank, agent,
+    pass=N/M, success_pct, mean_steps, mean_cost_usd, p50/p95 latency,
+    recovery_count, decline_count.
+  - Bracket sub-section per slice when leaderboard.json has one
+    (round list + winner).
+  - Overall ranking table (uses leaderboard.overall).
+  - Pareto front: textual list of pareto-optimal agents (success_pct
+    vs mean_cost_usd) + 40x10 ASCII scatter; * = pareto-optimal,
+    o = dominated, + = overlap.
+  - Best trajectory per agent: pass=true first, then highest score,
+    then lowest cost, then lowest latency. Each row links to
+    runs/<agent>/<task>/<seed>/trajectory.jsonl.gz via the link
+    prefix (defaults to "../" since docs/ sits one level below repo
+    root).
+  - Failure clusters: by terminal_state ("error class"), by task
+    tag (each failed cell contributes once per tag), top failing
+    tasks (sorted by failure count, capped at 20), and a "recent
+    failure trajectories" list (last 10 by completed_at) with deep
+    links to the gzipped trajectories.
+- Tasks are loaded fresh from tasks/suite/<slice>/ at report time so
+  failure clusters can attach tags. Missing or malformed task files
+  are skipped silently rather than aborting the report.
+- Slice scoping: generateReport filters loaded summaries to slices
+  that appear in leaderboard.json. So a `tournament --slice=hard`
+  invocation followed by `make report` will NOT include stale
+  easy-slice cells from prior tournaments. Validated by a dedicated
+  test (generateReport: filters out summaries from slices not
+  represented in the leaderboard).
+- Updated harness/ts/cli/report.ts (replaced the stub) and the
+  Makefile's `report` target (removed the "stub only" message).
+  CLI flags: --runs-root (default ./runs), --out (default
+  docs/leaderboard.md), --link-prefix (default ../).
+- Files changed: prd.json, progress.txt, Makefile,
+  harness/ts/cli/report.ts, harness/ts/report/{types.ts,
+  loadSummaries.ts, render.ts, index.ts},
+  harness/ts/tests/report.test.ts.
+- Quality: typecheck clean. node --test runs 162 TS tests
+  (14 new in report.test.ts) all passing. uv run pytest -q runs
+  7/7 passing.
+- Smoke: ran `tournament --slice=easy --agents=click-first-link
+  --tasks=easy-example-com` then `tournament --slice=hard
+  --agents=click-first-link --tasks=hard-shadow-form`, then
+  `report --runs-root=...` against both. Report rendered correctly,
+  bracket section omitted (single agent), Pareto/best-trajectory/
+  failure-clusters all populated. Confirmed scoping: after running
+  the hard tournament, the report only shows hard-slice data.
+- **Learnings for future iterations:**
+  - The leaderboard.json gets OVERWRITTEN on every tournament run
+    (US-010 design). To get a multi-slice report, run the tournament
+    with --slice=easy,hard in ONE invocation. Otherwise the report
+    only covers the latest invocation's slices (which is the
+    intended scoping per AC #4 "for the latest run").
+  - Markdown escaping: only escape `|`, `\`, and backtick in cell
+    text; underscores/hyphens/asterisks render fine in tables.
+    Inside `` `code spans` `` use escapeCode (only the backtick).
+    The first version of escapeMd over-escaped and broke test regex
+    matchers — keep escapeMd minimal.
+  - Report scoping by slice happens in generateReport, NOT in
+    renderReport. renderReport is pure: it takes whatever
+    summaries you pass in. Future code that wants to render a
+    multi-tournament aggregate report can just pass all summaries.
+  - Loading summaries: walk runs/<agent>/<task>/<seed>/summary.json
+    via loadAllSummaries(runsRoot). Default skip predicate excludes
+    leaderboard.json, .cache, and any dotfile entry. ENOENT on the
+    runs root returns [] rather than throwing — safe for fresh
+    repos.
+  - The default linkPrefix "../" assumes docs/leaderboard.md sits
+    one level below the repo root. If you change the output path,
+    pass --link-prefix accordingly so links resolve. Tests cover
+    custom prefixes (https:// for static-site embeds, etc).
+  - Pareto front computation lives at paretoFront(rows). Algorithm:
+    a row is dominated if some other row has higher-or-equal
+    success AND lower-or-equal cost AND strictly better on at
+    least one axis. Sort the front by cost asc for left-to-right
+    chart reading.
+  - Best-trajectory ranking ties: pass desc → score desc → cost
+    asc → latency asc → task_id asc → seed asc. Last two are
+    deterministic tie-breakers, not real signal.
 ---

@@ -192,8 +192,8 @@
         "Tests pass"
       ],
       "priority": 11,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented at harness/ts/report/{types,loadSummaries,render,index}.ts and harness/ts/cli/report.ts. `make report` reads runs/leaderboard.json + walks runs/<agent>/<task>/<seed>/summary.json sidecars, then writes docs/leaderboard.md with: (1) per-slice ranked tables in canonical order easy/medium/hard (orderedSliceNames), (2) bracket sub-section when leaderboard has one, (3) overall ranking, (4) Pareto front section with textual list + 40x10 ASCII scatter (success_pct vs mean_cost_usd, * = pareto-optimal, o = dominated, + = overlap), (5) Best-trajectory-per-agent table linked to runs/<agent>/<task>/<seed>/trajectory.jsonl.gz (best = pass=true first, then highest score, lowest cost, lowest latency), (6) Failure clusters (by terminal_state aka 'error class', by task tag with N tags contributing once each, top failing tasks, recent-10 failure trajectory list with deep links). All agent ids link to ../agents/<id>/README.md (default linkPrefix='../' since docs/ sits one level below repo root; configurable via --link-prefix). Summaries are scoped to slices that appear in leaderboard.json so a `tournament --slice=hard` invocation does NOT bleed stale easy-slice cells into the failure clusters. Tasks are loaded fresh from tasks/suite/<slice>/ to attach tags; missing/malformed task files are skipped silently. CLI flags: --runs-root, --out, --link-prefix. Tests: 14 new in report.test.ts (paretoFront dominance + edge cases, bestTrajectoryPerAgent ranking, computeFailureClusters with unknown-task fallback, renderReport asserting the full section layout + custom linkPrefix + no-failures branch, loadAllSummaries skipping .cache/leaderboard.json, generateReport end-to-end + slice-filter + missing-leaderboard error). 162 TS tests + 7 Python tests passing. Smoke: ran tournament against click-first-link on easy-example-com + hard-shadow-form, generated reports, confirmed per-slice scoping behaves correctly."
     },
     {
       "id": "US-012",

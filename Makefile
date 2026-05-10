@@ -46,7 +46,6 @@ tournament:
 
 report:
 	@echo "==> make report"
-	@echo "Note: full report generator lands in US-011. Stub only for now."
 	npx tsx harness/ts/cli/report.ts
 
 clean:
