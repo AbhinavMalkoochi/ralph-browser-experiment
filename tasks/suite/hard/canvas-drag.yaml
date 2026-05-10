@@ -1,0 +1,20 @@
+id: hard-canvas-drag
+goal: |
+  The page renders a small diagram with three labelled rectangles on a single
+  <canvas>: A (blue, draggable, left), B (yellow, target slot, right, dashed
+  outline), and C (green, draggable, top). Drag node A so its centre lands on
+  B's slot. The canvas exposes its layout as window.__test.meta.layout and
+  reports the final position of each dropped node as window.__test.nodes[<key>]
+  along with window.__test.deliveredToB[<key>] (true when the centres are
+  within window.__test.meta.hitRadius pixels).
+start_url: "fixtures://canvas-drag"
+difficulty: hard
+tags:
+  - hard
+  - fixtures
+  - canvas
+  - drag_drop
+  - spatial
+verifier:
+  kind: js
+  expression: "Boolean(window.__test && window.__test.deliveredToB && window.__test.deliveredToB.A === true)"

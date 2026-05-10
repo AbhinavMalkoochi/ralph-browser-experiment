@@ -107,8 +107,8 @@
         "Tests pass"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented at tasks/fixtures/{server,serve}.ts + tasks/fixtures/pages/{shadow_form,canvas_drag,virtual_scroll}.ts and tasks/suite/hard/{shadow-form,canvas-drag,virtual-scroll}.yaml. server.ts is a node:http server (no Express/Vite dep) exposing /shadow-form, /canvas-drag, /virtual-scroll plus /__shadow/{submit,last} and /__reset. resolveFixtureUrl rewrites the `fixtures://<path>` scheme used in YAML specs to the live origin. eval runner at harness/ts/eval/runner.ts loads tasks via loadTaskFile, spins up startFixturesServer when any task's start_url is fixtures://, calls fixtures.reset() between tasks, runs the agent, runs verify(), prints a summary. Built-in `trivial` alias resolves to click-first-link. `make eval AGENT=trivial SLICE=hard` exits 0 with a 3-row table reporting all three FAIL/DECLINED. Tests: 6 fixtures_server.test.ts (HTTP-only) + 6 fixtures_sanity.test.ts (Chrome-driven, trivial fails / cheat passes for each fixture). 84 TS tests + 7 Python tests passing."
     },
     {
       "id": "US-007",

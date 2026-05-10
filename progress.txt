@@ -107,6 +107,32 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   are explicitly unsupported (workaround: nest the mapping). When US-006
   fixtures push the format past this subset, swap in js-yaml — but the
   subset has been chosen to cover the real task specs in this repo.
+- Hostile fixtures (US-006) at `tasks/fixtures/{server,serve}.ts` +
+  `tasks/fixtures/pages/*.ts`. Server is plain `node:http` (no Express
+  dep). Each page is a single exported HTML constant; route + (optional)
+  state endpoints live in server.ts. YAML task specs at
+  `tasks/suite/hard/*.yaml` use `start_url: "fixtures://<route>"` —
+  `resolveFixtureUrl(start_url, server.origin)` rewrites it to the live
+  127.0.0.1:<random> URL at run time. Use `make fixtures` to boot the
+  server in the foreground for manual poking. See `tasks/CLAUDE.md` for
+  the recipe for adding a new fixture (US-007/US-008 will extend this).
+- Eval runner (US-006 partial; full US-010 supersedes) at
+  `harness/ts/eval/runner.ts`. `runEval({agent, slice, seeds, runsRoot})`
+  loads every yaml under `tasks/suite/<slice>/`, conditionally starts
+  the fixtures server when any task is `fixtures://`, instantiates the
+  agent (loaded by file path from `agents/<id>/agent.ts`; built-in alias
+  `trivial → click-first-link` lives in `AGENT_ALIASES`), runs each
+  (task, seed) cell, calls `verify()`, and prints a summary table. The
+  tournament-grade resumable runner with leaderboard JSON lands in US-010
+  — when adding it, REPLACE the eval CLI body, do NOT add a parallel
+  entry point. Per-difficulty budgets live in `DIFFICULTY_BUDGETS` and
+  must stay in sync with US-010's AC #2.
+- Verifier `js` expressions can hit fixtures-server endpoints via
+  `fetch('/__feature/last')` because the page origin === the fixtures
+  origin during a run. `awaitPromise=true` on Runtime.evaluate (set in
+  JsVerifier) means the verifier may return a Promise<bool>. Use this
+  instead of stuffing state into `window.__test` whenever the relevant
+  state is server-side.
 ---
 
 ## 2026-05-08 - US-001
@@ -493,4 +519,120 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     intended distinction: an agent's self-reported terminal state is
     independent of the verifier verdict, and tournament metrics will use
     the verifier verdict as ground truth.
+---
+
+## 2026-05-08 - US-006
+- Hostile fixtures + eval runner. Three brutal local pages defeat naive
+  agents; the eval CLI runs the slice end-to-end and reports failures.
+- Fixtures server at `tasks/fixtures/server.ts` (node:http, no Express).
+  `startFixturesServer({port?})` returns `{origin, port, close, reset}`;
+  port=0 picks an ephemeral 127.0.0.1 port. Three pages + state endpoints:
+    GET  /shadow-form        Open shadow-root account-setup form.
+    GET  /canvas-drag        Single-canvas drag-and-drop diagram.
+    GET  /virtual-scroll     500-row virtualised feed (only ~20 mounted).
+    POST /__shadow/submit    JSON receipt for the shadow form.
+    GET  /__shadow/last      Read latest receipt; verifier hits this.
+    POST /__reset            Clear server state between tasks.
+    GET  /__health           "ok"
+- `make fixtures` runs `tasks/fixtures/serve.ts` in the foreground so
+  fixtures can be poked manually at /shadow-form etc.
+- `tasks/fixtures/pages/{shadow_form,canvas_drag,virtual_scroll}.ts` each
+  export a single HTML constant (inline script + style; no static assets).
+  Pages publish state to `window.__test` so JS verifiers can read it.
+- Three YAML specs at `tasks/suite/hard/{shadow-form,canvas-drag,virtual-scroll}.yaml`,
+  difficulty=hard, verifier.kind=js (= programmatic). They use the
+  `fixtures://<route>` start_url scheme; `resolveFixtureUrl()` rewrites
+  to the live origin at run time so the YAML is portable.
+- Eval runner at `harness/ts/eval/runner.ts`:
+  - `loadAgent(id, repoRoot)` dynamically imports `agents/<id>/agent.ts`
+    (via `pathToFileURL`) and instantiates the default export. Built-in
+    alias `trivial → click-first-link` in `AGENT_ALIASES`.
+  - `loadSliceTasks(slice, repoRoot)` reads `tasks/suite/<slice>/*.yaml`
+    (sorted) through `loadTaskFile`.
+  - `runEval(opts)` spins up the fixtures server iff any task uses
+    `fixtures://`, runs each (task, seed) cell via a fresh
+    `CdpBrowserSession`, calls `verify()`, returns an `EvalSummary`.
+  - `formatSummary(summary)` prints a header + per-row table.
+  - `DIFFICULTY_BUDGETS` mirrors US-010's per-difficulty Budget spec.
+- `harness/ts/cli/eval.ts` is no longer a stub: `make eval AGENT=<id>
+  SLICE=<slice> SEEDS=<n>` calls `runEval` and prints the summary. Exit
+  0 even on task failure (failure is signal, not an error).
+- Tests:
+  - `harness/ts/tests/fixtures_server.test.ts` (6) — pure HTTP: each
+    page returns 200 with expected markers; /__shadow round-trip and
+    /__reset; 400 on invalid submissions; 404 on unknown path;
+    `resolveFixtureUrl` rewrite cases; YAML specs all load with
+    valid programmatic verifiers.
+  - `harness/ts/tests/fixtures_sanity.test.ts` (6) — Chrome-driven:
+    for each fixture, trivial click-first-link FAILS the verifier and
+    a hand-written inline cheat agent (shadow-root traversal /
+    synthetic mouse events / programmatic scrollTop) PASSES it. Cheat
+    agents live in the test file, not under agents/ — they exist only
+    to demonstrate the verifier accepts a correctly-completed task.
+- `make eval AGENT=trivial SLICE=hard` output (verified):
+    [eval] agent=click-first-link slice=hard total=3 passed=0 failed=3 (3.2s)
+      FAIL hard-canvas-drag             seed=0 term=DECLINED ...
+      FAIL hard-shadow-form             seed=0 term=DECLINED ...
+      FAIL hard-virtual-scroll          seed=0 term=DECLINED ...
+- Files changed/added: tasks/fixtures/{server,serve}.ts (new),
+  tasks/fixtures/pages/{shadow_form,canvas_drag,virtual_scroll}.ts (new),
+  tasks/suite/hard/{shadow-form,canvas-drag,virtual-scroll}.yaml (new),
+  harness/ts/eval/runner.ts (new), harness/ts/cli/eval.ts (rewrite),
+  harness/ts/tests/{fixtures_server,fixtures_sanity}.test.ts (new),
+  Makefile (eval no longer prints stub note; new `fixtures` target),
+  tasks/CLAUDE.md (new), progress.txt, prd.json.
+- Quality checks: `npm run typecheck` clean; `npm test` 84/84 passing
+  (12 new — 6 HTTP-only + 6 Chrome-driven); `uv run pytest -q` 7/7
+  unchanged.
+- **Learnings for future iterations:**
+  - The `fixtures://<path>` URL scheme + `resolveFixtureUrl` is a
+    cheap way to keep YAML specs portable across fixtures-server
+    invocations (port differs every run because we bind to :0 for
+    isolation). Reuse it for any new local-server fixtures in
+    US-007/US-008.
+  - JS verifiers can hit server endpoints with `fetch('/__shadow/last')`
+    because the page origin === fixtures origin during the run. This
+    is the right pattern for verifying server-side receipt rather than
+    stuffing receipts into `window.__test` (which an agent might
+    overwrite). Use `Promise<bool>` returns; JsVerifier sets
+    awaitPromise=true.
+  - `loadAgent` uses `pathToFileURL` because dynamic `import()` of an
+    absolute filesystem path requires a `file://` URL on Node ESM —
+    bare paths get resolved as bare specifiers.
+  - The fixtures server is `node:http` rather than express because
+    Express adds 50+ deps for a 6-route server and we can read the
+    body in 5 lines. If a future fixture needs static-file serving
+    (US-008 Fixture 10 PDF download), add a single static branch
+    rather than reaching for a framework.
+  - `CdpBrowserSession` is fine for the eval runner today (one task
+    at a time, sequential). When US-010 lands the resumable runner,
+    swap to `BrowserPool.withSession({taskTimeoutMs})` so multiple
+    cells run in parallel and per-task hard timeouts work. The
+    verifier framework's `verify()` already accepts the live session,
+    no API changes needed.
+  - Cheat agents in the sanity tests are inline closures, NOT entries
+    under agents/. Keeping them out of the tournament directory means
+    they never pollute leaderboards or trigger US-012's distinctness
+    check. They earn their keep by proving the verifiers accept a
+    real success without committing to a permanent agent.
+  - The trivial agent's `terminal_state` was `DECLINED` for all three
+    hard fixtures (no anchors to click on shadow-form / canvas-drag /
+    virtual-scroll page bodies). Plus the JS verifier reports
+    `pass:false`. This is the AC-required failure half — the page
+    structure is hostile by design.
+  - Shadow-form fixture sets `document.title = 'submitted'` on
+    successful submit so the cheat agent can wait deterministically
+    via MutationObserver instead of guessing a fixed delay. Steal
+    this trick whenever a future fixture is async-on-success.
+  - Virtual-scroll uses `target-247` (past row 200, hits AC). The
+    fixture exposes `window.__test.rowHeight` so the cheat agent can
+    compute `scrollTop = idx * rowHeight - 100` rather than hard-
+    coding 48. Future fixtures with computed layouts should mirror
+    this self-describing pattern.
+  - Canvas-drag exposes `window.__test.meta.layout` (a deep copy of
+    the initial node positions) so the cheat agent can drag from
+    A-coords to B-coords without scraping the canvas. This double-
+    purposes as a smoke test of synthetic MouseEvent dispatch on
+    canvas — many naive a11y agents will need a similar primitive
+    to pass this fixture for real.
 ---

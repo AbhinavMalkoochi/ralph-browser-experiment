@@ -1,9 +1,14 @@
-.PHONY: install smoke eval tournament report typecheck test clean
+.PHONY: install smoke eval tournament report typecheck test clean fixtures
 
 # Default agent and slice for eval
 AGENT ?= trivial
 SLICE ?= easy
 SEEDS ?= 1
+
+# Boot the hostile-fixtures server in the foreground (Ctrl-C to stop). Useful
+# for poking at /shadow-form, /canvas-drag, /virtual-scroll without an agent.
+fixtures:
+	npx tsx tasks/fixtures/serve.ts
 
 install:
 	@echo "==> Installing Node deps"
@@ -28,7 +33,6 @@ test-py:
 
 eval:
 	@echo "==> make eval AGENT=$(AGENT) SLICE=$(SLICE) SEEDS=$(SEEDS)"
-	@echo "Note: full eval pipeline lands in US-009/US-010. Stub only for now."
 	npx tsx harness/ts/cli/eval.ts --agent=$(AGENT) --slice=$(SLICE) --seeds=$(SEEDS)
 
 tournament:

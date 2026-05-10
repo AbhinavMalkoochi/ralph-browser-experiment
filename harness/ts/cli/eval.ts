@@ -1,15 +1,29 @@
-// Stub. Full eval pipeline lands with US-009 (easy slice loader) and the
-// tournament runner (US-010). Exits 0 with a clear note so make targets work.
-export {};
+// `make eval AGENT=<id> SLICE=<slice>` entry point.
+//
+// Loads every yaml task under tasks/suite/<slice>/, spins up the local
+// fixtures server when any task uses a `fixtures://` URL, runs the named
+// agent through the slice, verifies each run, prints a summary table and
+// exits 0. The full tournament runner with leaderboard JSON / per-cell
+// resumability lands in US-010.
 
-interface Args {
-  agent?: string;
-  slice?: string;
-  seeds?: string;
+import { resolve } from "node:path";
+
+import { runEval, formatSummary } from "../eval/runner.js";
+
+interface CliArgs {
+  agent: string;
+  slice: string;
+  seeds: number;
+  runsRoot: string;
 }
 
-function parseArgs(argv: string[]): Args {
-  const out: Args = {};
+function parseArgs(argv: string[]): CliArgs {
+  const out: CliArgs = {
+    agent: "trivial",
+    slice: "easy",
+    seeds: 1,
+    runsRoot: resolve(process.cwd(), "runs"),
+  };
   for (const arg of argv) {
     const m = arg.match(/^--([^=]+)=(.*)$/);
     if (!m) continue;
@@ -17,13 +31,22 @@ function parseArgs(argv: string[]): Args {
     if (key === undefined || value === undefined) continue;
     if (key === "agent") out.agent = value;
     else if (key === "slice") out.slice = value;
-    else if (key === "seeds") out.seeds = value;
+    else if (key === "seeds") {
+      const n = Number.parseInt(value, 10);
+      if (Number.isFinite(n) && n > 0) out.seeds = n;
+    } else if (key === "runs-root") out.runsRoot = resolve(value);
   }
   return out;
 }
 
-const args = parseArgs(process.argv.slice(2));
-console.log(
-  `[eval] STUB: agent=${args.agent ?? "trivial"} slice=${args.slice ?? "easy"} seeds=${args.seeds ?? "1"}`,
-);
-console.log("[eval] eval pipeline lands in US-009/US-010.");
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  const summary = await runEval(args);
+  process.stdout.write(formatSummary(summary) + "\n");
+}
+
+main().catch((err: unknown) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  process.stderr.write(`[eval] error: ${msg}\n`);
+  process.exit(1);
+});

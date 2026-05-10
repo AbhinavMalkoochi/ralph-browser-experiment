@@ -1,0 +1,22 @@
+id: hard-shadow-form
+goal: |
+  The page contains an account-setup form rendered inside an open shadow root
+  attached to a <shadow-form> custom element. The form is not reachable via
+  document.querySelector('input'). Submit the form with the following exact
+  values:
+    username = alice
+    email    = alice@example.com
+    tier     = gold
+  The form posts JSON to /__shadow/submit; success is acknowledged with a
+  green status message.
+start_url: "fixtures://shadow-form"
+difficulty: hard
+tags:
+  - hard
+  - fixtures
+  - shadow_dom
+  - form
+  - server_receipt
+verifier:
+  kind: js
+  expression: "fetch('/__shadow/last').then(r => r.json()).then(j => Boolean(j && j.username === 'alice' && j.email === 'alice@example.com' && j.tier === 'gold'))"

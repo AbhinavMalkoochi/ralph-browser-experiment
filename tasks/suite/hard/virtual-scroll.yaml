@@ -1,0 +1,17 @@
+id: hard-virtual-scroll
+goal: |
+  The #feed container shows a virtualised list of 500 items, but only the ~20
+  rows in the viewport are mounted at any moment. Scroll the feed until the
+  row whose data-id is "target-247" enters view, then click its "action"
+  button. The page records the clicked id at window.__test.clickedId.
+start_url: "fixtures://virtual-scroll"
+difficulty: hard
+tags:
+  - hard
+  - fixtures
+  - virtualization
+  - scroll
+  - long_list
+verifier:
+  kind: js
+  expression: "Boolean(window.__test && window.__test.clickedId === 'target-247')"
