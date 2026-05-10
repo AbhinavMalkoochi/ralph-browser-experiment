@@ -434,6 +434,32 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   by baseline, data-rollback-aid was avoided — speculative-rollback
   does NOT tag elements in the DOM at all; it relies on CSS selectors
   from LLM-authored output, which is itself a distinguishing choice).
+- Predicate-driven agent (US-017) at agents/predicate-driven/.
+  Mechanism: ONE upfront LLM call synthesises a JS predicate that
+  returns true in the page when the goal is met; the loop terminates
+  from CODE the moment the predicate evaluates true. The action LLM
+  has NO `finish` action — actions.parseAction explicitly rejects it
+  with a message about the agent's invariant. Distinct on the
+  TERMINATION axis from all four prior agents (baseline finish,
+  plan-then-execute end-of-plan, runtime-codegen body.done, srb judge).
+- predicate.ts: parsePredicate accepts {predicate|expression|expr|test}
+  + optional {rationale|thought|why}; wrapPredicate produces
+  `(async () => { try { return Boolean(<expr>); } catch (e) {
+   return { __predicate_error: ... }; } })()` so syntax errors fall
+  out of evaluate() (parse fails before try) and runtime errors come
+  back as a typed object. evaluatePredicate normalises both paths into
+  {satisfied: bool, error?: string}. Wrapping uses Boolean() so any
+  truthy/falsy value collapses cleanly.
+- Two-LLM-call agents that share an LLMClient + paradigmSeed CAN
+  produce identical cache keys if both calls have identical messages.
+  Predicate-driven dodges this by giving the synthesiser a different
+  system prompt (PREDICATE_PROMPT vs ACTION_PROMPT), so the two calls
+  always hash to different keys even if the user content matched.
+- Test pattern for a "loop terminates from code" agent: don't end
+  scripted-LLM turns at the boundary you expect to hit. The
+  scriptedProvider stays parked on the LAST turn so an unexpectedly-
+  short loop will burn LLM calls but not throw "out of turns" — see
+  the "predicate stays false through maxSteps" test.
 ---
 
 ## 2026-05-08 - US-001
@@ -2092,4 +2118,83 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     discipline but reaches deeper into the page (e.g. JS bodies +
     judge, or a hybrid that emits both CSS selectors AND shadow/canvas
     escape hatches).
+---
+
+## 2026-05-10 - US-017
+- Shipped fourth novel agent: agents/predicate-driven/. Mechanism: ONE
+  upfront LLM call synthesises a JS predicate that evaluates to true in
+  the page when the goal is met; the agent loop polls the predicate
+  after every action and terminates from CODE the moment it fires. The
+  action LLM has NO `finish` action — the parser explicitly rejects
+  {type:"finish"}, so the LLM cannot terminate the loop. Distinct on
+  the TERMINATION axis from all four prior agents.
+- Files: agent.ts (Agent subclass + outer loop + LLM message builders),
+  predicate.ts (parsePredicate + wrapPredicate + evaluatePredicate),
+  actions.ts (AgentAction union + parser that rejects `finish` +
+  CSS-selector executor), observe.ts (in-page snapshot + formatter),
+  manifest.yaml, README.md. Tests: harness/ts/tests/
+  predicate_driven_agent.test.ts (33 new — parsePredicate alternates
+  + rejection paths, parseAction rejects finish + standard cases,
+  evaluatePredicate truthy/falsy/runtime-error/syntax-error/async,
+  end-to-end real-Chrome runs covering 7 paths, manifest distinctness).
+- Live eval (gpt-4o-mini, temperature=0):
+   * Easy slice: 18/22 PASS in 111.1s. 4 fails: easy-httpbin-form,
+     easy-httpbin-html, easy-rfc-791, easy-wiki-linux. The 4 fails
+     are NOT the agent's predicate being wrong — the runner pre-
+     navigates to start_url so the verifier would already match;
+     the agent's actions then navigated AWAY (e.g. to a referenced
+     link) and broke the verifier's regex. A future iteration could
+     teach the agent to ALSO check the verifier-friendly initial
+     state before acting.
+   * Hard slice: 2/10 PASS in 107.0s. modal-stack and recoverable.
+     Modal-stack is a NEW pass: the predicate keeps the agent
+     honest about completing the full 3-step FSM rather than
+     stopping after one transition. Recoverable is the canonical
+     predicate-driven win — the loop just does not exit after the
+     first 500, where baseline + plan-then-execute either declare
+     `finish` (lying about completion) or run out of plan budget.
+- Both thresholds (≥3/20 easy, ≥1/10 hard) met with margin.
+- Trajectories at runs/predicate-driven/{easy-*,hard-*}/0/trajectory.
+  jsonl.gz — 32 files, 516K. Not committed (runs/ is gitignored,
+  consistent with US-013/U-014/U-015/U-016 precedent).
+- Quality checks: typecheck clean; npm test 313/313 (33 new); pytest
+  7/7. agents/CLAUDE.md updated with the new agent's section.
+- **Learnings for future iterations:**
+  - When designing an agent whose mechanism is "loop terminates on a
+    code-evaluated condition", the EASIEST way to keep the LLM from
+    short-circuiting is to refuse the `finish` action at the parser
+    level, not in the prompt. parseAction in actions.ts throws
+    ActionParseError with a message that explicitly cites the
+    agent's invariant; the loop records a parse_error step and
+    continues. Prompts can drift; parsers cannot.
+  - Wrapping an LLM-emitted JS expression for in-page eval has TWO
+    failure paths that need separate handling:
+     (a) syntax errors throw OUT of CdpBrowserSession.evaluate
+         because parsing happens BEFORE the try/catch wrapper runs;
+         catch at the evaluate() boundary in TS.
+     (b) runtime errors are caught by the in-page try/catch and
+         come back as a structured object ({__predicate_error}).
+    evaluatePredicate normalises both into the same
+    {satisfied, error?} surface — that single shape simplifies the
+    agent loop a lot.
+  - For predicate-driven agents specifically: the predicate prompt
+    should warn against being true at start. An eager predicate
+    that fires before any action makes the run trivially DONE with
+    no work — it's not technically wrong (the verifier may even
+    match) but it makes the trajectory uninformative for debugging.
+  - The agent's predicate is INDEPENDENT of the harness verifier
+    (harness/ts/verifier/). They may even disagree: the agent may
+    DECLINE on a max-steps limit while the page state actually
+    matches the verifier. This is fine — the agent's predicate is
+    a search heuristic, the verifier is the scoring oracle.
+  - Two LLM calls in the same agent that share an LLMClient +
+    paradigmSeed CAN produce identical cache keys if both calls have
+    identical messages. Predicate-driven dodges this by giving the
+    synthesiser a different system prompt (PREDICATE_PROMPT vs
+    ACTION_PROMPT), so the two calls always hash to different keys.
+  - When testing a "loop terminates from code" agent, leave the
+    scriptedProvider parked on its LAST turn rather than throwing
+    out-of-turns. An unexpectedly-short loop should burn LLM calls
+    silently rather than crash the test — see the
+    "predicate stays false through maxSteps" test.
 ---

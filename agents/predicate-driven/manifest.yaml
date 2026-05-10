@@ -1,0 +1,25 @@
+id: predicate-driven
+language: typescript
+summary: |
+  Fourth novel agent (US-017). The LLM authors a JS PREDICATE upfront that
+  evaluates to TRUE in the page when the goal is satisfied; the agent loop
+  terminates from CODE the moment the predicate fires. The LLM never emits
+  a `finish` action and cannot mistakenly declare completion. Distinct on
+  the TERMINATION axis: every prior agent gives the LLM the final word
+  (baseline-a11y-react `finish`, plan-then-execute end-of-plan, runtime-
+  codegen `{done:true}`, speculative-rollback judge `done`); this one
+  inverts that — the predicate runs in the page after every action and is
+  the SOLE termination signal. Closer to test-driven browsing: synthesise
+  the test first, then mutate state until the test passes.
+approach_keywords:
+  - goal_predicate
+  - predicate_loop
+  - llm_synthesised_test
+  - code_terminated_loop
+  - self_verifying
+  - condition_polling
+distinct_from:
+  - baseline-a11y-react
+  - plan-then-execute
+  - runtime-codegen
+  - speculative-rollback

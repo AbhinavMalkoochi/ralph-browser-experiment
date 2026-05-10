@@ -165,6 +165,29 @@ trajectory.
   slots by 1), 1/10 hard (recoverable — exactly where the judge
   shines). The 9 hard failures are substrate-bound (shadow/canvas/
   iframe/popup/PDF), not loop-bound — documented in README.
+- `predicate-driven/` — US-017, fourth novel slot. The LLM authors a
+  JS PREDICATE upfront (one synthesis call); the agent loop polls the
+  predicate in-page after every action and **terminates from CODE the
+  moment the predicate returns true**. The action LLM has NO `finish`
+  action — `actions.parseAction` explicitly rejects `{type:"finish"}`
+  with a message about the agent's invariant. **Distinct on the
+  TERMINATION axis**: every prior agent gives the LLM the final word
+  (baseline `finish`, plan-then-execute end-of-plan, runtime-codegen
+  body.done, srb judge done); this one inverts that. The predicate is
+  the agent's OWN probe (separate from the harness verifier in
+  `harness/ts/verifier/`); they may even disagree, which costs the
+  agent steps but never leaks signal into scoring. Synthesis prompt
+  asks for evidence-based predicates and warns against being true at
+  start. The wrapped form is `(async () => { try { return Boolean(<expr>);
+  } catch (e) { return { __predicate_error: ... }; } })()` so syntax
+  errors fall out of evaluate() (parse fails before try) and runtime
+  errors come back as a typed object — `evaluatePredicate` normalises
+  both into `{satisfied: bool, error?: string}`. Action substrate is
+  CSS selectors (same shape as srb), so capability on substrate-bound
+  fixtures (canvas/popup/PDF) is unchanged from prior agents — the
+  win zone is fixtures with TRANSIENT failure modes (recoverable,
+  late-hydration, conditional-form) where the predicate keeps the
+  agent honest about whether the page actually reached the goal state.
 
 ## Distinctness (US-012, enforced)
 
