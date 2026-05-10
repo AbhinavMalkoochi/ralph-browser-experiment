@@ -1,0 +1,24 @@
+id: runtime-codegen
+language: typescript
+summary: |
+  Second novel agent (US-015). Each turn the LLM emits the BODY of an async
+  JavaScript function (no fixed action vocabulary) that runs inside the page
+  via CDP Runtime.evaluate. The body has first-class access to the DOM:
+  shadowRoot traversal, same-origin iframe.contentDocument, synthetic
+  mouse-event dispatch on canvas, fetch() against same-origin APIs,
+  postMessage — anything a page JS could do. The body returns
+  {done?, message, navigate?, sleep_ms?} and the harness loops. Distinct in
+  core mechanism from baseline-a11y-react (a11y snapshot + JSON action set)
+  and plan-then-execute (batch text-keyed plan): code generation IS the
+  action layer.
+approach_keywords:
+  - code_generation
+  - in_page_runtime
+  - js_emission
+  - runtime_evaluate
+  - script_action
+  - no_action_vocabulary
+  - llm_codegen
+distinct_from:
+  - baseline-a11y-react
+  - plan-then-execute

@@ -136,6 +136,17 @@ trajectory.
   Plan content is recorded as a trajectory step with
   `action.type='plan'` and `phase='initial' | 'repair'`. Live eval:
   21/22 easy, 2/10 hard with gpt-4o-mini.
+- `runtime-codegen/` — US-015, second novel slot. **No action
+  vocabulary**: each turn the LLM emits the body of an async JS
+  function that the harness runs in-page via `Runtime.evaluate`. The
+  body returns `{done?, message, navigate?, sleep_ms?}` and the agent
+  loops. Distinct from prior slots because the LLM authors the action
+  as *code* — direct access to shadow DOM, iframe.contentDocument,
+  synthetic MouseEvent dispatch, fetch(), postMessage. In-page
+  exceptions are caught inside the IIFE and surfaced as the next
+  observation, giving a one-turn self-correcting retry path. Live
+  eval: 21/22 easy, **5/10 hard** with gpt-4o-mini (shadow-form,
+  virtual-scroll, modal-stack, late-hydration, recoverable).
 
 ## Distinctness (US-012, enforced)
 

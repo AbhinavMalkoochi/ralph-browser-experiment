@@ -342,11 +342,57 @@ Started: Fri May  8 09:48:39 PM CDT 2026
 - Convention: every novel agent's manifest.yaml MUST list
   distinct_from: [baseline-a11y-react, ...prior-slots] AND the test
   suite SHOULD include an assertion that approach_keywords has 0%
-  Jaccard with the baseline. See plan_then_execute_agent.test.ts
-  "manifest: ... shares no approach_keywords" for the pattern. The
-  distinctness check in tournament/distinctness.ts also enforces this
-  at discovery time, but a unit test that compares manifests catches
-  drift earlier (e.g. when someone edits the baseline keywords).
+  Jaccard with EVERY prior agent (loop the assertion if there are
+  multiple). See runtime_codegen_agent.test.ts
+  "manifest: ... zero keyword overlap" for the multi-target pattern.
+  The distinctness check in tournament/distinctness.ts also enforces
+  this at discovery time, but a unit test catches drift earlier (e.g.
+  when someone edits a prior agent's keywords).
+- Runtime-codegen agent (US-015) at agents/runtime-codegen/.
+  Mechanism: the LLM emits raw JS function bodies that run INSIDE the
+  page via Runtime.evaluate. No fixed action vocabulary. The body
+  returns {done?, message, navigate?, sleep_ms?} and the agent loops.
+  Distinct from baseline (fixed action set + aids) and plan-then-execute
+  (fixed action set + text + batch) on the action layer itself.
+- Code-emitting agents: wrap the LLM body in
+  `(async () => { try { ${body} } catch (e) { return {__error:e.message}; } })()`
+  so the IIFE catches runtime errors INSIDE the page and reports them
+  back as structured fields. Two failure paths to remember:
+   (a) syntax errors throw out of CdpBrowserSession.evaluate (parse
+       happens before try/catch is entered) — agent catches at the
+       evaluate() boundary, surfaces as `{error}` for next-turn
+       self-correction.
+   (b) runtime errors are caught by the in-page try/catch and come
+       back as `{__error,__stack}`. Same surface shape after
+       normaliseResult so the agent loop is uniform.
+- Code-emitting agents: cross-origin top-level navigation MUST be
+  requested via `{navigate: "..."}` (the agent calls browser.navigate).
+  Setting `location.href = "..."` from inside the IIFE detaches the JS
+  context mid-script and the in-page Promise never resolves; the
+  evaluate() call hangs until the harness's per-task timeout. Document
+  this in the system prompt.
+- The eval runner does NOT load .env. `make eval` against agents that
+  need an LLM must be preceded by `set -a && source .env && set +a`
+  (or invoked from a shell with the keys already exported). When an
+  LLMClient is constructed via defaultClient() and no API keys are
+  in process.env, the FIRST llm.call() throws
+  LLMProviderUnavailableError; agents must catch and DECLINE for the
+  contract test to pass without secrets. Easy-slice cells that look
+  PASS+DECLINED in the no-key path are passing because the runner
+  pre-navigates to start_url and the page-text verifier matches before
+  the agent does anything — this is not a regression, it's the
+  baseline shape for "navigation alone suffices."
+- LLM observation shape for code-emitting agents (runtime-codegen):
+  structural counts (a/button/input/select/textarea/iframe/canvas/
+  shadow_hosts/forms) + visible buttons (tag+text) + visible inputs
+  (type+label+placeholder) + frames (src/id/name/sameOrigin) + 1500
+  chars of body innerText. Crucially DIFFERENT from the baseline's
+  aid-tagged element list: the LLM never references an id integer,
+  because the body resolves elements with its own selectors.
+- HISTORY_LIMIT for code-emitting agents should be ~4 (vs 6 for
+  baseline) because each historical entry stores a ~200-char script
+  excerpt PLUS the result message — more verbose per entry, so a
+  shorter window stays under the prompt budget.
 ---
 
 ## 2026-05-08 - US-001
@@ -1774,4 +1820,113 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     accept the ~500K cost — the JSONL traces are cheap to keep around
     locally for the next iteration's failure mining even if not
     committed.
+---
+
+## 2026-05-10 - US-015
+- Shipped the second novel agent: agents/runtime-codegen/. Mechanism: each
+  turn the LLM emits the body of an async JS function that the harness wraps
+  in an IIFE and runs in-page via Runtime.evaluate. The body returns
+  {done?, message, navigate?, sleep_ms?} and the agent loops. There is NO
+  fixed action vocabulary — code IS the action layer.
+- Files added:
+   - agents/runtime-codegen/codegen.ts — extractScript (tolerates ```js/
+     ```javascript/``` fences and leading prose; rejects empty bodies AND
+     bodies missing a top-level return), wrapBody (async IIFE + in-page
+     try/catch returning {__error,__stack}), runEmittedScript +
+     normaliseResult (folds the in-page error path AND unknown shapes into
+     EmitResult).
+   - agents/runtime-codegen/observe.ts — compact structural observation:
+     URL, title, body text (1500 chars), {a,button,input,...} counts,
+     visible buttons (tag+text), visible inputs (type+label+placeholder),
+     iframes (src/id/name/sameOrigin). NO aid tagging — the LLM resolves
+     selectors with its own JS.
+   - agents/runtime-codegen/agent.ts — the loop: observePage → buildMessages
+     (system prompt + goal + last 4 scripts + current observation) →
+     llm.call → extractScript → runEmittedScript → trajectory.addStep →
+     {done? finish : navigate? + sleep_ms? + continue}. Parse errors
+     re-prompt without aborting. LLMProviderUnavailableError /
+     LLMReplayMissError both produce a clean DECLINED.
+   - agents/runtime-codegen/manifest.yaml — approach_keywords =
+     [code_generation, in_page_runtime, js_emission, runtime_evaluate,
+     script_action, no_action_vocabulary, llm_codegen]. distinct_from =
+     [baseline-a11y-react, plan-then-execute]. Jaccard = 0 against both.
+   - agents/runtime-codegen/README.md — 200-500 word mechanism description,
+     prior-art notes (code-as-policies, ACT-1, OpenInterpreter), what the
+     mechanism is good vs bad at, failure-mode commentary.
+- Tests at harness/ts/tests/runtime_codegen_agent.test.ts (22 new):
+   - extractScript: 5 happy paths (bare/fenced/leading prose) + 2 rejection paths
+   - wrapBody: shape assertion (async IIFE, in-page catch, __error return)
+   - normaliseResult: 7 cases (done/navigate/sleep_ms-clamp/in-page error/
+     null/non-object/missing message)
+   - end-to-end on real Chrome: click-by-text via emitted JS + finish DONE
+   - end-to-end on real Chrome: shadow root piercing + form submit + finish
+   - end-to-end: in-page throw → next-turn self-correct → DONE
+   - end-to-end: parse_error path does not abort
+   - end-to-end: no-LLM (replay-only) declines cleanly
+   - end-to-end: tight-budget short-circuit BUDGET_EXCEEDED
+   - manifest distinctness: zero keyword overlap with BOTH baseline AND
+     plan-then-execute
+- AGENT_ALIASES not touched — the agent is referenced by its literal id
+  `runtime-codegen`. Discovery picks it up automatically (already verified:
+  `discoverAgents()` returns 5 entries including runtime-codegen).
+- Live eval with gpt-4o-mini and runs/.cache/llm warm-from-this-iteration:
+   - Easy slice: 21/22 PASS (89.8s). The single FAIL is easy-httpbin-form
+     — the form fields don't have visible labels and the agent's
+     observation-driven selectors miss them. Same task plan-then-execute
+     also fails.
+   - Hard slice: 5/10 PASS (282.6s):
+       hard-late-hydration  PASS (sleep_ms then check)
+       hard-modal-stack     PASS (sequential clicks)
+       hard-recoverable     PASS (retry path)
+       hard-shadow-form     PASS — shadowRoot.querySelector breakthrough
+       hard-virtual-scroll  PASS — scrollBy in-page directly to row 200+
+       hard-canvas-drag     FAIL (coord math is brittle)
+       hard-conditional-form FAIL (needs cross-turn state tracking)
+       hard-iframe-drag     FAIL (same-origin coordination)
+       hard-multi-tab       FAIL (popup runs in unattached CDP target)
+       hard-pdf-task        FAIL (binary parse of fetch() bytes)
+   - Beats plan-then-execute (2/10) by 3 fixtures. AC #5 satisfied: >=3/20
+     easy and >=1/10 hard, with margin.
+- Quality checks: `npm run typecheck` clean. `npm test` 253/253 TS +
+  7/7 Python (22 new TS tests). Hard-eval trajectories saved to
+  runs/runtime-codegen/hard-*/0/trajectory.jsonl.gz (gitignored, will
+  be useful for US-022 failure mining).
+- progress.txt patterns added at the top of file:
+   - Code-emitting agents must wrap bodies in (async () => { try {...}
+     catch (e) { return {__error}; } })() so in-page exceptions become
+     structured observations, not transport errors.
+   - Cross-origin top-level navigation from inside the IIFE detaches the
+     JS context and hangs the evaluate() Promise — agents must request
+     it via `{navigate: "..."}` so the harness calls browser.navigate.
+   - `make eval` does NOT auto-load .env; agents that need an LLM must
+     be invoked after `set -a && source .env && set +a` (or with keys
+     already exported by the shell).
+   - HISTORY_LIMIT for code-emitting agents should be ~4 because each
+     entry includes a ~200-char script excerpt; baseline's 6 is too
+     verbose at the same per-entry budget.
+- agents/CLAUDE.md updated with the new agent under "Novel agents".
+- **Learnings for future iterations:**
+   - The biggest distinct-mechanism win in this slot was on shadow-form
+     and virtual-scroll — both are "DOM walk that the prior agents could
+     not reach". Future slots aimed at the remaining hard failures should
+     target: cross-context coordination (popup/iframe/canvas) and stateful
+     schemas (conditional-form). A "world-model" or "event-bus" agent
+     could plausibly crack iframe-drag (postMessage relay observation)
+     and conditional-form (state-machine reasoning across turns).
+   - The "in-page exception → next-turn observation" pattern is what
+     made the agent robust on real LLM output. With gpt-4o-mini on the
+     hard slice, ~30% of emitted bodies threw at least once; the
+     self-correcting retry path turned most of those into eventual
+     wins. Worth keeping in mind for any future agent that runs LLM
+     output as code.
+   - When checking score on hard tasks: terminal_state=DECLINED with
+     score=1.00 is a REAL PASS. The agent ran out of steps but its
+     intermediate actions left the page in a passing state. Don't
+     filter on terminal_state==DONE alone.
+   - Discovery cost: zero edits outside agents/runtime-codegen/. The
+     auto-discovery from US-012 just works; this is the second confirmation
+     after US-014 that the contract is solid.
+   - Eval timing reference for gpt-4o-mini @ temperature=0:
+     ~4s/easy task, ~28s/hard task (cache warm: ~1s/easy, ~6s/hard).
+     hard slice with 1 seed costs ~$0.04-0.08 in OpenAI tokens.
 ---
