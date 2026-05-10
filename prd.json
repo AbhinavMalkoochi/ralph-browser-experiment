@@ -209,8 +209,8 @@
         "Tests pass"
       ],
       "priority": 12,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented at harness/ts/tournament/{distinctness,contract}.ts. Distinctness uses Jaccard(approach_keywords, target_keywords) >0.5 (case-insensitive set comparison); empty lists return 0. validateDistinctness(agents) returns one DistinctnessIssue per (violator, target) pair; discoverAgents post-passes the issues, drops violators, and emits formatDistinctnessWarning(issue) so a tournament never silently runs an agent whose distinctness claim is untrue. Opt out via enforceDistinctness:false. Self-references and references to agents not in the discovery set are skipped silently. runContractTest({agents, runsRoot, browserFactory?}) runs each agent on a 1-task dry slice (default: tiny data: URL, default budget = 1k tokens / $1 / 30s / 5 steps) and validates the produced trajectory using DUCK TYPING (looks for `.metadata` and `.isFinished`), NOT `instanceof Trajectory` — tsx may load an agent file via a different module URL than the harness's static import, which gives false negatives across the boundary. Captures one ContractResult{agent_id, ok, reason, terminal_state} per agent; failures don't abort the loop. Tests: 27 new (14 distinctness unit/integration, 7 contract incl. live agents + tmpdir TS no-op + tmpdir Python no-op + 4 failure modes). 189 TS tests + 7 Python tests passing. agents/CLAUDE.md distinctness section now says 'enforced' and documents the contract test."
     },
     {
       "id": "US-013",

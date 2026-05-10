@@ -1,6 +1,15 @@
-// Public surface of the tournament module (US-010).
+// Public surface of the tournament module (US-010 + US-012).
 
 export { discoverAgents, validateManifest } from "./discovery.js";
+export {
+  DISTINCTNESS_THRESHOLD,
+  formatDistinctnessWarning,
+  jaccardOverlap,
+  validateDistinctness,
+} from "./distinctness.js";
+export type { DistinctnessIssue, ValidateDistinctnessOpts } from "./distinctness.js";
+export { runContractTest } from "./contract.js";
+export type { ContractResult, ContractTestOpts } from "./contract.js";
 export { aggregate, buildLeaderboardFile, formatLeaderboard, percentile, writeLeaderboard } from "./leaderboard.js";
 export { buildBracket } from "./bracket.js";
 export { hasSummary, readSummary, summaryPath, writeSummary } from "./summary.js";

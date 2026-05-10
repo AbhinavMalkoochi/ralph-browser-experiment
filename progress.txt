@@ -262,6 +262,27 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   someone greps the doc. For content INSIDE backtick code spans use
   escapeCode (only `` ` ``); markdown treats code-span content
   literally otherwise.
+- Distinctness (US-012) at harness/ts/tournament/distinctness.ts.
+  Jaccard(approach_keywords) > 0.5 (case-insensitive set semantics)
+  is the rule; discoverAgents drops violators with a warning by
+  default (enforceDistinctness:false to opt out). Self-references
+  and references to agents not in the discovery set are ignored.
+  validateDistinctness returns one DistinctnessIssue per (violator,
+  target) pair so a multi-target violator surfaces all conflicts.
+- Contract test (US-012) at harness/ts/tournament/contract.ts.
+  runContractTest({agents, runsRoot, browserFactory?, ...}) runs each
+  agent on a 1-task dry slice (default tiny data: URL, default
+  budget {tokens:1k, usd:1, wallSeconds:30, steps:5}) and validates
+  the trajectory via DUCK TYPING (`.metadata` + `.isFinished`),
+  NOT instanceof Trajectory. tsx may load an agent file via a
+  different module URL than the harness's static import — across
+  that boundary `instanceof` gives false negatives. Use duck typing
+  whenever you cross dynamic-import / static-import.
+- Tmpdir agents (US-012 tests): when a test agent in /tmp/.../agents/
+  <id>/ needs to import the harness, write the import as
+  `path.relative(agentDir, harnessFile).replace(/\\/g, "/")` so the
+  URL stays canonical. Absolute file:// URLs interact oddly with
+  tsx's .js→.ts rewrite and produce duplicate module instances.
 ---
 
 ## 2026-05-08 - US-001
@@ -1364,4 +1385,107 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   - Best-trajectory ranking ties: pass desc → score desc → cost
     asc → latency asc → task_id asc → seed asc. Last two are
     deterministic tie-breakers, not real signal.
+---
+
+## 2026-05-09 - US-012
+- Implemented agent auto-discovery contract tests (US-012). Two new
+  modules + 27 new tests; all five ACs satisfied.
+- harness/ts/tournament/distinctness.ts:
+  - jaccardOverlap(a,b): case-insensitive set Jaccard, returns 0 on
+    either-empty input.
+  - validateDistinctness(agents, {threshold?}): walks every (agent,
+    target) pair where agent.manifest.distinct_from references target,
+    computes Jaccard(approach_keywords, target.approach_keywords), and
+    returns one DistinctnessIssue per pair where overlap > threshold
+    (default 0.5, matching PRD ">50% overlap"). Self-references and
+    references to agents not in the discovery set are skipped silently.
+  - formatDistinctnessWarning(issue): stable warning string used by
+    discovery and matched in tests.
+- harness/ts/tournament/contract.ts:
+  - runContractTest({agents, runsRoot, browserFactory?, ...}) runs each
+    agent on a 1-task dry slice (default: tiny data: URL, default
+    budget {tokens:1000, usd:1, wallSeconds:30, steps:5}) and returns
+    a ContractResult per agent {agent_id, ok, reason, terminal_state}.
+  - Validates the produced trajectory via DUCK TYPING (`.metadata`,
+    `.isFinished`), NOT `instanceof Trajectory`. See learnings below
+    for why instanceof is the wrong tool here.
+  - Failures captured per-agent; one broken agent does not abort the
+    contract loop.
+  - TS path: dynamic import of agentFile via pathToFileURL, validates
+    the default export has a callable `run()`, calls it, validates
+    the returned trajectory.
+  - Python path: opens trajectory TS-side, spawns PythonAgentBridge,
+    runs the existing runPythonAgent flow, then validates the
+    trajectory the bridge filled in.
+- harness/ts/tournament/discovery.ts: added enforceDistinctness option
+  (default true) — discoverAgents runs validateDistinctness as a
+  post-pass and drops violators with a warning. enforceDistinctness:
+  false keeps them. distinctnessThreshold overrides 0.5 if needed.
+- harness/ts/tournament/index.ts: re-exports distinctness +
+  contract surface (DISTINCTNESS_THRESHOLD, jaccardOverlap,
+  validateDistinctness, formatDistinctnessWarning, runContractTest,
+  ContractResult, ContractTestOpts, DistinctnessIssue).
+- agents/CLAUDE.md: replaced "Distinctness (US-012, not yet enforced)"
+  section with the now-enforced rule, added "Contract test (US-012)"
+  section documenting runContractTest + the duck-typing reason.
+- Tests:
+  - tournament_distinctness.test.ts (17 tests) — Jaccard math
+    (identical/disjoint/partial/empty/case-insensitive/dedup),
+    validateDistinctness happy paths + violations + boundary (Jaccard
+    exactly 0.5 does NOT trigger; threshold is strict >),
+    self-reference + unknown-target ignore, multi-target violator
+    issue count, custom threshold, formatDistinctnessWarning shape,
+    discoverAgents drops violators + enforceDistinctness:false keeps
+    them + low-overlap claim allowed, live agents pass distinctness
+    sanity (catches accidental edits to live manifests).
+  - tournament_contract.test.ts (7 tests) — live click-first-link[+_py]
+    pass with FakeBrowserSession, agent.run() returning null caught,
+    default export with no run() caught, agent that opens but never
+    finishes trajectory caught, agent whose trajectory.agent_id
+    mismatches caught, AC #5 TS no-op agent in tmpdir end-to-end,
+    AC #5 Python no-op agent in tmpdir end-to-end (skip when no
+    .venv/bin/python).
+- prd.json: US-012 → passes:true with implementation notes.
+- Quality: `npm run typecheck` clean. `npm test` 189/189 pass (162 +
+  27 new). `uv run pytest -q` 7/7 pass (unchanged).
+- **Learnings for future iterations:**
+  - `instanceof` checks across dynamically-imported and statically-
+    imported modules are FRAGILE under tsx. The contract test
+    initially used `inst instanceof Agent` and `traj instanceof
+    Trajectory` and failed for tmpdir agents because tsx loaded the
+    same logical class via a different URL than the test's static
+    import. Use duck typing for cross-load-path identity checks.
+    The harness's runner.ts gets away with `mod.default` because it
+    never instanceof-checks the result; it just calls `.run()`.
+  - When a test agent in a tmpdir needs to import the harness, write
+    the import path with `path.relative(agentDir, harnessFile).
+    replace(/\\/g, "/")` so the URL stays canonical across platforms.
+    Do NOT use absolute file:// URLs — Node's URL normalization
+    interacts oddly with tsx's .js→.ts rewrite hook and you can end
+    up with two distinct module instances for the same source file.
+  - `validateDistinctness` and `discoverAgents` both default to
+    enforcement; the runner inherits this. If a future tooling pass
+    wants to lint manifests without dropping them (e.g. for a
+    pre-commit hook that just complains), pass
+    `enforceDistinctness: false` and call `validateDistinctness` on
+    the result directly.
+  - Jaccard at the 0.5 boundary does NOT trigger (strict `>`). If a
+    future agent author wants the threshold to be inclusive they
+    should pass an explicit `threshold: 0.4999` or similar. The
+    inclusive-vs-strict distinction is asserted in the boundary test.
+  - Contract test budget defaults are intentionally tight (1k tokens,
+    $1, 30s, 5 steps) so a contract violation that spins forever
+    surfaces as BUDGET_EXCEEDED quickly. Real agents will use the
+    DIFFICULTY_BUDGETS table; the contract test is just a "did it
+    produce a trajectory" smoke.
+  - The Python no-op agent test demonstrates that agents/<id>/agent.py
+    + manifest.yaml in a tmpdir is sufficient — Python's importlib
+    loads from any path, and `gba_agent` resolves via PYTHONPATH set
+    by PythonAgentBridge.spawn. So "zero edits outside agent dir"
+    holds for both languages.
+  - Live-agents distinctness sanity test (`live agents pass
+    distinctness (sanity)`) is a small but important guard: if a
+    future iteration edits agents/click-first-link*/manifest.yaml to
+    add a distinct_from claim, the test catches the case where the
+    keywords haven't been updated to match.
 ---

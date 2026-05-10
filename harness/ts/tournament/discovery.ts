@@ -3,12 +3,19 @@
 // Each subdirectory must contain a manifest.yaml and either agent.ts (TS) or
 // agent.py (Python). Invalid manifests are skipped with a warning so that one
 // broken agent does not abort the whole tournament. Distinctness validation
-// is deferred to US-012.
+// (US-012) runs as a post-pass: any agent whose manifest.distinct_from
+// declares distinctness from another loaded agent but whose approach_keywords
+// overlap >50% (Jaccard) is dropped with a warning rather than running
+// untruthfully labelled.
 
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { parseYaml, type YamlValue } from "../verifier/yaml.js";
+import {
+  formatDistinctnessWarning,
+  validateDistinctness,
+} from "./distinctness.js";
 import type { AgentLanguage, AgentManifest, DiscoveredAgent } from "./types.js";
 
 export interface DiscoverOptions {
@@ -23,6 +30,17 @@ export interface DiscoverOptions {
    * stderr. Tests pass a buffer.
    */
   onWarn?: (msg: string) => void;
+  /**
+   * When true (default), enforce manifest.distinct_from declarations: an
+   * agent whose approach_keywords overlap >50% (Jaccard) with any agent
+   * it claims to be distinct from is dropped from the result and a
+   * warning is emitted. Pass false to keep all agents regardless of
+   * distinctness violations (e.g. for tooling that wants to surface them
+   * itself).
+   */
+  enforceDistinctness?: boolean;
+  /** Override the distinctness threshold (Jaccard, default 0.5). */
+  distinctnessThreshold?: number;
 }
 
 export async function discoverAgents(opts: DiscoverOptions = {}): Promise<DiscoveredAgent[]> {
@@ -50,6 +68,22 @@ export async function discoverAgents(opts: DiscoverOptions = {}): Promise<Discov
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       onWarn(`skipping agents/${entry}: ${msg}`);
+    }
+  }
+
+  if (opts.enforceDistinctness !== false) {
+    const issues = validateDistinctness(out, {
+      ...(opts.distinctnessThreshold !== undefined
+        ? { threshold: opts.distinctnessThreshold }
+        : {}),
+    });
+    if (issues.length > 0) {
+      const drop = new Set<string>();
+      for (const issue of issues) {
+        onWarn(formatDistinctnessWarning(issue));
+        drop.add(issue.agent_id);
+      }
+      return out.filter((a) => !drop.has(a.id));
     }
   }
   return out;

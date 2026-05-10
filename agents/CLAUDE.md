@@ -120,12 +120,43 @@ trajectory.
 - `click-first-link-py/` — Python sibling. Exercises the cross-language
   bridge end-to-end.
 
-## Distinctness (US-012, not yet enforced)
+## Distinctness (US-012, enforced)
 
 `manifest.distinct_from` lists agent ids this agent claims a distinct
-mechanism from. The auto-discovery contract test will reject a new agent
-whose `approach_keywords` overlap >50% with any agent it claims to be
-distinct from.
+mechanism from. Auto-discovery (`harness/ts/tournament/discovery.ts`)
+runs a post-pass that computes the Jaccard overlap between this agent's
+`approach_keywords` and the target agent's `approach_keywords`; if the
+overlap exceeds 0.5 the violator is dropped from the discovery result
+and a `distinctness violation:` warning is emitted. Pass
+`enforceDistinctness: false` to opt out (e.g. tooling that wants to
+surface violations itself rather than filter them).
+
+Practical guidance:
+- The check is symmetric (Jaccard) so order of `approach_keywords`
+  does not matter; comparison is case-insensitive.
+- Keywords like `trivial` / `reference` (the test agents share these)
+  are fine because each test agent's `distinct_from` is `[]` — only a
+  declared claim is validated.
+- A new agent should pick keywords that *describe its mechanism*
+  (e.g. `event_bus`, `code_gen`, `world_model`), not generic labels
+  every agent might use, so legitimate distinctness claims survive.
+
+## Contract test (US-012)
+
+`harness/ts/tournament/contract.ts` exposes `runContractTest({agents,
+runsRoot, browserFactory?})` which runs each agent on a 1-task dry
+slice (default: a tiny data: URL) and checks that the agent returns
+a finished Trajectory whose `metadata.agent_id` matches the manifest
+and whose `terminal_state` is set. Failures are captured per-agent and
+do NOT abort the loop, so one broken agent cannot mask others. The
+test is wired into `harness/ts/tests/tournament_contract.test.ts` and
+runs against the live agents under `agents/` on every `make test`.
+
+The contract test uses **duck typing** (looking for `metadata` /
+`isFinished` fields), not `instanceof Trajectory`, because tsx may
+load an agent file dynamically against a different module URL than
+the harness's static import — `instanceof` would give false negatives
+across that boundary.
 
 ## Trajectory output layout
 
