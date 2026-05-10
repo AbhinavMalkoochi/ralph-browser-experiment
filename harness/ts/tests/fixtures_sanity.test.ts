@@ -109,6 +109,102 @@ const FIXTURES: FixtureCase[] = [
       })()`);
     },
   },
+  {
+    taskFile: "tasks/suite/hard/modal-stack.yaml",
+    taskKey: "modal-stack",
+    cheat: async (browser) => {
+      // Click the primary action on each modal in order: idle -> step1_done
+      // -> step2_done -> done. Each click is synchronous and the next modal
+      // is mounted immediately, so no RAF wait is needed.
+      await browser.evaluate(`(async () => {
+        document.getElementById('m1-begin').click();
+        if (window.__test.current !== 'step1_done') throw new Error('m1 did not advance: ' + window.__test.current);
+        document.getElementById('m2-accept').click();
+        if (window.__test.current !== 'step2_done') throw new Error('m2 did not advance: ' + window.__test.current);
+        document.getElementById('m3-finish').click();
+        if (window.__test.current !== 'done') throw new Error('m3 did not advance: ' + window.__test.current);
+      })()`);
+    },
+  },
+  {
+    taskFile: "tasks/suite/hard/conditional-form.yaml",
+    taskKey: "conditional-form",
+    cheat: async (browser) => {
+      // Walk through the four conditional steps in order, filling the right
+      // field set for each branch and waiting for the title to flip on a
+      // successful server-side submission.
+      await browser.evaluate(`(async () => {
+        // Step 1: pick "personal".
+        document.querySelector('input[name="account_type"][value="personal"]').click();
+        document.getElementById('next-1').click();
+        // Step 2: birth_year + email (the personal branch).
+        document.getElementById('birth_year').value = '1995';
+        document.getElementById('email').value = 'alice@example.com';
+        document.getElementById('next-2').click();
+        // Step 3: country.
+        document.getElementById('country').value = 'usa';
+        document.getElementById('next-3').click();
+        // Step 4: ssn (the usa branch) + submit.
+        document.getElementById('ssn').value = '123-45-6789';
+        document.getElementById('submit-btn').click();
+        // Wait for the title mutation that signals server ack.
+        await new Promise((resolve) => {
+          if (document.title === 'submitted') return resolve();
+          const o = new MutationObserver(() => {
+            if (document.title === 'submitted') { o.disconnect(); resolve(); }
+          });
+          o.observe(document.querySelector('title') || document.head, {
+            characterData: true, childList: true, subtree: true,
+          });
+          setTimeout(() => { o.disconnect(); resolve(); }, 2000);
+        });
+      })()`);
+    },
+  },
+  {
+    taskFile: "tasks/suite/hard/iframe-drag.yaml",
+    taskKey: "iframe-drag",
+    cheat: async (browser) => {
+      // Walk into both iframes, dispatch synthetic mousedown on the source's
+      // beta box and mouseup on the target's slot-2, wait for the parent
+      // window's postMessage listener to record the drop.
+      await browser.evaluate(`(async () => {
+        const srcIframe = document.getElementById('src');
+        const dstIframe = document.getElementById('dst');
+        const waitLoad = (frame) => new Promise((r) => {
+          if (frame.contentDocument && frame.contentDocument.readyState === 'complete') return r();
+          frame.addEventListener('load', () => r(), { once: true });
+        });
+        await waitLoad(srcIframe);
+        await waitLoad(dstIframe);
+        // Items may not be in the DOM the very first frame after load; retry briefly.
+        let item = null, slot = null, tries = 0;
+        while ((!item || !slot) && tries < 30) {
+          item = srcIframe.contentDocument.querySelector('[data-id="beta"]');
+          slot = dstIframe.contentDocument.querySelector('[data-id="slot-2"]');
+          if (item && slot) break;
+          await new Promise((r) => setTimeout(r, 30));
+          tries++;
+        }
+        if (!item || !slot) throw new Error('iframe items not mounted');
+        const r1 = item.getBoundingClientRect();
+        const r2 = slot.getBoundingClientRect();
+        const fire = (el, type, x, y, view) => el.dispatchEvent(new view.MouseEvent(type, {
+          bubbles: true, cancelable: true,
+          clientX: x, clientY: y,
+          button: 0, buttons: type === 'mouseup' ? 0 : 1,
+        }));
+        fire(item, 'mousedown', r1.left + r1.width / 2, r1.top + r1.height / 2, srcIframe.contentWindow);
+        fire(slot, 'mouseup',   r2.left + r2.width / 2, r2.top + r2.height / 2, dstIframe.contentWindow);
+        // Wait for the parent's postMessage listener to record the drop.
+        for (let i = 0; i < 30; i++) {
+          if (window.__test.drops.some((d) => d.sourceId === 'beta' && d.targetId === 'slot-2')) return;
+          await new Promise((r) => setTimeout(r, 30));
+        }
+        throw new Error('drop was not recorded after dispatch');
+      })()`);
+    },
+  },
 ];
 
 class CheatAgent extends Agent {

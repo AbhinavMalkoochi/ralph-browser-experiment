@@ -124,8 +124,8 @@
         "Tests pass"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added 3 new hostile fixtures: tasks/fixtures/pages/{modal_stack,conditional_form,iframe_drag}.ts and tasks/suite/hard/{modal-stack,conditional-form,iframe-drag}.yaml. Modal-stack is a 3-deep nested-modal state machine (idle->step1_done->step2_done->done) with decoy buttons that move the FSM to a frozen 'aborted' terminal — tagged irreversible. Conditional-form is a 4-step branching form: account_type (personal|business) determines which step-2 fields appear AND which regex validates them; country (usa|canada|mexico) determines which step-4 ID field validates; the server cross-checks the path on submit. Iframe-drag is parent + 2 same-origin child frames that relay mousedown (source) and mouseup (target) via window.parent.postMessage; parent's listener records {sourceId,targetId,x,y,droppedAt} into window.__test.drops. Hard slice now has 6 fixtures; trivial click-first-link fails ALL six (all DECLINED), hand-crafted cheats pass all six. 91 TS tests (7 new: 1 conditional HTTP round-trip + 6 sanity tests) + 7 Python tests passing."
     },
     {
       "id": "US-008",

@@ -1,0 +1,22 @@
+id: hard-modal-stack
+goal: |
+  The page presents three nested onboarding modals that must be navigated in
+  order: step-1 (Welcome), step-2 (Terms), step-3 (Confirm). The page tracks a
+  client-side state machine at window.__test with transitions
+    idle -> step1_done -> step2_done -> done
+  Each modal also exposes a decoy button (Skip / Decline / Try later) that
+  immediately moves the state machine to "aborted" and CLOSES every modal
+  permanently. Once aborted the state is FROZEN; reopening modals or clicking
+  buttons has no effect. Click the primary action on every modal in order so
+  the final state is "done".
+start_url: "fixtures://modal-stack"
+difficulty: hard
+tags:
+  - hard
+  - fixtures
+  - modal
+  - state_machine
+  - irreversible
+verifier:
+  kind: js
+  expression: "Boolean(window.__test && window.__test.current === 'done')"

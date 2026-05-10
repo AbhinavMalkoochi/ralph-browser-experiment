@@ -1,18 +1,28 @@
-// Hostile-fixtures HTTP server for the US-006 hard slice.
+// Hostile-fixtures HTTP server.
 //
-// Three deliberately brutal pages backed by a tiny http server (no Express dep):
+// Backed by a tiny http server (no Express dep) and a set of deliberately
+// brutal pages designed to defeat naive browser agents:
 //
-//   GET  /shadow-form        Open shadow-root form. Submitting POSTs JSON to
-//                            /__shadow/submit, which logs the payload server-side.
-//   GET  /canvas-drag        Canvas-rendered diagram editor. Mouse events on the
-//                            <canvas> drive node positions; final positions are
-//                            written to window.__test for verification.
-//   GET  /virtual-scroll     500-row virtualised infinite-scroll feed. Only ~20
-//                            rows are mounted at any time; clicking a row's
-//                            button writes the id to window.__test.clickedId.
+//   GET  /shadow-form        US-006: Open shadow-root form. Submit posts JSON
+//                            to /__shadow/submit, which the server logs.
+//   GET  /canvas-drag        US-006: Canvas-rendered diagram editor.
+//   GET  /virtual-scroll     US-006: 500-row virtualised infinite-scroll feed.
 //
-//   POST /__shadow/submit    Records {username,email,tier} as the latest receipt.
-//   GET  /__shadow/last      Returns the latest receipt as JSON ({} if none).
+//   GET  /modal-stack        US-007: Three nested modals navigated in a
+//                            specific order; client-side state machine on
+//                            window.__test.
+//   GET  /conditional-form   US-007: Form whose validation rules change
+//                            mid-stream based on prior field values. Submit
+//                            posts JSON to /__conditional/submit; server
+//                            cross-checks the path and stores the receipt.
+//   GET  /iframe-drag        US-007: Two same-origin iframes, drag from one
+//                            into the other. Source and target pages live at
+//                            /iframe-drag/source and /iframe-drag/target.
+//
+//   POST /__shadow/submit    Shadow-form receipt sink.
+//   GET  /__shadow/last      Latest shadow receipt ({} if none).
+//   POST /__conditional/submit  Conditional-form receipt sink with cross-check.
+//   GET  /__conditional/last    Latest conditional receipt ({} if none).
 //   POST /__reset            Clears server-side state (used between tasks).
 //   GET  /__health           Returns "ok" for liveness probes.
 //
@@ -26,6 +36,13 @@ import { type AddressInfo } from "node:net";
 import { SHADOW_FORM_HTML } from "./pages/shadow_form.js";
 import { CANVAS_DRAG_HTML } from "./pages/canvas_drag.js";
 import { VIRTUAL_SCROLL_HTML } from "./pages/virtual_scroll.js";
+import { MODAL_STACK_HTML } from "./pages/modal_stack.js";
+import { CONDITIONAL_FORM_HTML } from "./pages/conditional_form.js";
+import {
+  IFRAME_DRAG_PARENT_HTML,
+  IFRAME_DRAG_SOURCE_HTML,
+  IFRAME_DRAG_TARGET_HTML,
+} from "./pages/iframe_drag.js";
 
 export interface FixturesServer {
   origin: string;
@@ -41,12 +58,26 @@ export interface ShadowReceipt {
   receivedAt?: string;
 }
 
+export interface ConditionalReceipt {
+  account_type?: string;
+  email?: string;
+  country?: string;
+  birth_year?: string;
+  tax_id?: string;
+  ssn?: string;
+  sin?: string;
+  rfc?: string;
+  path?: number[];
+  receivedAt?: string;
+}
+
 interface FixtureState {
   lastShadowReceipt: ShadowReceipt;
+  lastConditionalReceipt: ConditionalReceipt;
 }
 
 function freshState(): FixtureState {
-  return { lastShadowReceipt: {} };
+  return { lastShadowReceipt: {}, lastConditionalReceipt: {} };
 }
 
 export async function startFixturesServer(opts: { port?: number; host?: string } = {}): Promise<FixturesServer> {
@@ -94,6 +125,21 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, state: F
   if (method === "GET" && (path === "/virtual-scroll" || path === "/virtual-scroll/")) {
     return sendHtml(res, VIRTUAL_SCROLL_HTML);
   }
+  if (method === "GET" && (path === "/modal-stack" || path === "/modal-stack/")) {
+    return sendHtml(res, MODAL_STACK_HTML);
+  }
+  if (method === "GET" && (path === "/conditional-form" || path === "/conditional-form/")) {
+    return sendHtml(res, CONDITIONAL_FORM_HTML);
+  }
+  if (method === "GET" && (path === "/iframe-drag" || path === "/iframe-drag/")) {
+    return sendHtml(res, IFRAME_DRAG_PARENT_HTML);
+  }
+  if (method === "GET" && path === "/iframe-drag/source") {
+    return sendHtml(res, IFRAME_DRAG_SOURCE_HTML);
+  }
+  if (method === "GET" && path === "/iframe-drag/target") {
+    return sendHtml(res, IFRAME_DRAG_TARGET_HTML);
+  }
 
   if (method === "POST" && path === "/__shadow/submit") {
     const body = await readBody(req);
@@ -119,6 +165,28 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, state: F
     return sendJson(res, 200, state.lastShadowReceipt);
   }
 
+  if (method === "POST" && path === "/__conditional/submit") {
+    const body = await readBody(req);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body || "{}");
+    } catch {
+      return sendJson(res, 400, { ok: false, error: "invalid json" });
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return sendJson(res, 400, { ok: false, error: "expected object" });
+    }
+    const result = validateConditionalSubmission(parsed as Record<string, unknown>);
+    if (!result.ok) {
+      return sendJson(res, 400, { ok: false, error: result.error });
+    }
+    state.lastConditionalReceipt = { ...result.receipt, receivedAt: new Date().toISOString() };
+    return sendJson(res, 200, { ok: true });
+  }
+  if (method === "GET" && path === "/__conditional/last") {
+    return sendJson(res, 200, state.lastConditionalReceipt);
+  }
+
   if (method === "GET" && (path === "/" || path === "/index.html")) {
     return sendHtml(
       res,
@@ -128,12 +196,90 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, state: F
 <li><a href="/shadow-form">/shadow-form</a></li>
 <li><a href="/canvas-drag">/canvas-drag</a></li>
 <li><a href="/virtual-scroll">/virtual-scroll</a></li>
+<li><a href="/modal-stack">/modal-stack</a></li>
+<li><a href="/conditional-form">/conditional-form</a></li>
+<li><a href="/iframe-drag">/iframe-drag</a></li>
 </ul></body></html>`,
     );
   }
 
   res.writeHead(404, { "content-type": "text/plain" });
   res.end("not found");
+}
+
+interface ConditionalValidation {
+  ok: boolean;
+  error?: string;
+  receipt: ConditionalReceipt;
+}
+
+const COND_RULES = {
+  birth_year: (v: string): boolean =>
+    /^\d{4}$/.test(v) && Number(v) >= 1900 && Number(v) <= 2010,
+  tax_id: (v: string): boolean => /^\d{2}-\d{7}$/.test(v),
+  email: (v: string): boolean => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v),
+  ssn: (v: string): boolean => /^\d{3}-\d{2}-\d{4}$/.test(v),
+  sin: (v: string): boolean => /^\d{9}$/.test(v),
+  rfc: (v: string): boolean => /^[A-Z]{4}\d{6}[A-Z0-9]{3}$/.test(v),
+};
+
+function validateConditionalSubmission(obj: Record<string, unknown>): ConditionalValidation {
+  const account_type = obj.account_type;
+  if (account_type !== "personal" && account_type !== "business") {
+    return { ok: false, error: "account_type must be personal|business", receipt: {} };
+  }
+  const email = obj.email;
+  if (typeof email !== "string" || !COND_RULES.email(email)) {
+    return { ok: false, error: "invalid email", receipt: {} };
+  }
+  const country = obj.country;
+  if (country !== "usa" && country !== "canada" && country !== "mexico") {
+    return { ok: false, error: "country must be usa|canada|mexico", receipt: {} };
+  }
+  const path = obj.path;
+  if (!Array.isArray(path) || path.length !== 4 || path.some((s, i) => s !== i + 1)) {
+    return { ok: false, error: "path must be [1,2,3,4]", receipt: {} };
+  }
+  const receipt: ConditionalReceipt = { account_type, email, country, path: path as number[] };
+  if (account_type === "personal") {
+    const birth_year = obj.birth_year;
+    if (typeof birth_year !== "string" || !COND_RULES.birth_year(birth_year)) {
+      return { ok: false, error: "invalid birth_year", receipt: {} };
+    }
+    if (typeof obj.tax_id === "string" && obj.tax_id.length > 0) {
+      return { ok: false, error: "tax_id not allowed for personal accounts", receipt: {} };
+    }
+    receipt.birth_year = birth_year;
+  } else {
+    const tax_id = obj.tax_id;
+    if (typeof tax_id !== "string" || !COND_RULES.tax_id(tax_id)) {
+      return { ok: false, error: "invalid tax_id", receipt: {} };
+    }
+    if (typeof obj.birth_year === "string" && obj.birth_year.length > 0) {
+      return { ok: false, error: "birth_year not allowed for business accounts", receipt: {} };
+    }
+    receipt.tax_id = tax_id;
+  }
+  if (country === "usa") {
+    const ssn = obj.ssn;
+    if (typeof ssn !== "string" || !COND_RULES.ssn(ssn)) {
+      return { ok: false, error: "invalid ssn", receipt: {} };
+    }
+    receipt.ssn = ssn;
+  } else if (country === "canada") {
+    const sin = obj.sin;
+    if (typeof sin !== "string" || !COND_RULES.sin(sin)) {
+      return { ok: false, error: "invalid sin", receipt: {} };
+    }
+    receipt.sin = sin;
+  } else {
+    const rfc = obj.rfc;
+    if (typeof rfc !== "string" || !COND_RULES.rfc(rfc)) {
+      return { ok: false, error: "invalid rfc", receipt: {} };
+    }
+    receipt.rfc = rfc;
+  }
+  return { ok: true, receipt };
 }
 
 function sendHtml(res: ServerResponse, body: string): void {

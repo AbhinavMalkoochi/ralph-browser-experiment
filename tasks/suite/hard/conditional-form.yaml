@@ -1,0 +1,25 @@
+id: hard-conditional-form
+goal: |
+  The application form has four steps; the field set and the validation rules
+  for each step depend on prior answers. Submit the form with these exact
+  values:
+    step 1: account_type = personal
+    step 2: birth_year   = 1995
+            email        = alice@example.com
+    step 3: country      = usa
+    step 4: ssn          = 123-45-6789
+  The form posts a JSON payload to /__conditional/submit. The server
+  cross-checks the path (must be [1,2,3,4]) and rejects mismatches; on
+  success the receipt is stored at /__conditional/last.
+start_url: "fixtures://conditional-form"
+difficulty: hard
+tags:
+  - hard
+  - fixtures
+  - form
+  - conditional
+  - server_receipt
+  - irreversible
+verifier:
+  kind: js
+  expression: "fetch('/__conditional/last').then(r => r.json()).then(j => Boolean(j && j.account_type === 'personal' && j.birth_year === '1995' && j.email === 'alice@example.com' && j.country === 'usa' && j.ssn === '123-45-6789'))"

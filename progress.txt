@@ -133,6 +133,22 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   JsVerifier) means the verifier may return a Promise<bool>. Use this
   instead of stuffing state into `window.__test` whenever the relevant
   state is server-side.
+- Multi-page fixtures (US-007 iframe-drag): each child frame is a
+  separate route exporting its own `*_HTML` constant. Children relay
+  state via `window.parent.postMessage(...)` to a listener wired in
+  the parent's IIFE that maintains the canonical `window.__test`. The
+  parent's listener IS the source of truth for the verifier — children
+  never write `window.__test` themselves. postMessage delivery is
+  asynchronous (microtask/task), so cheats and any agent must poll
+  parent's `__test` for a few frames before asserting.
+- Trivial-fails / cheat-passes pattern scales to richer hostile pages:
+  the cheat closure is just an inline `browser.evaluate(...)` snippet.
+  For server-receipt fixtures (shadow-form, conditional-form), use a
+  `MutationObserver` on `<title>` (set to "submitted" on success) plus
+  a setTimeout fallback so the cheat blocks deterministically until
+  the server ack lands. For postMessage fixtures, poll the parent's
+  state with `await new Promise(r=>setTimeout(r,30))` until the
+  recorded entry appears.
 ---
 
 ## 2026-05-08 - US-001
@@ -635,4 +651,116 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     purposes as a smoke test of synthetic MouseEvent dispatch on
     canvas — many naive a11y agents will need a similar primitive
     to pass this fixture for real.
+---
+
+## 2026-05-09 - US-007
+- Three more brutal fixtures for the hard slice. Hard slice is now 6
+  fixtures total; US-008 will round out to 10.
+- Modal stack at `tasks/fixtures/pages/modal_stack.ts`. Three nested
+  modals stacked via z-index; each opens the next on the primary
+  click. State machine: idle -> step1_done -> step2_done -> done.
+  Each modal exposes a decoy (Skip / Decline / Try later) that
+  transitions to a TERMINAL `aborted` state and CLOSES every modal
+  permanently — the FSM checks `TERMINAL.has(current)` on every
+  transition so the page is irreversible once aborted/done. Verifier:
+  `window.__test.current === 'done'`. Tagged `irreversible`.
+- Conditional form at `tasks/fixtures/pages/conditional_form.ts`. Four
+  steps; the field set and the regex used to validate each step
+  depend on prior answers:
+    step 1: account_type radio (personal | business)
+    step 2: personal -> birth_year (1900..2010) + email
+            business -> tax_id (NN-NNNNNNN) + email
+    step 3: country select (usa | canada | mexico)
+    step 4: usa -> ssn (NNN-NN-NNNN), canada -> sin (9 digits),
+            mexico -> rfc (AAAA999999AAA)
+  Submit posts JSON with the full payload + a `path: [1,2,3,4]` array
+  to `/__conditional/submit`; server cross-checks the path AND that
+  the right id field is present for the picked country (SSN allowed
+  only for USA, etc.) before storing the receipt at
+  `/__conditional/last`. Goal: `personal / 1995 / alice@example.com /
+  usa / 123-45-6789`. Tagged `irreversible`.
+- Cross-iframe drag at `tasks/fixtures/pages/iframe_drag.ts`. Three
+  pages: `/iframe-drag` (parent, hosts both iframes side by side and
+  maintains `window.__test.{drops, lastDragSource}`),
+  `/iframe-drag/source` (3 draggable boxes alpha/beta/gamma),
+  `/iframe-drag/target` (3 drop slots slot-1/slot-2/slot-3). Source's
+  mousedown handler posts `{type:'dragstart', sourceId}` to
+  `window.parent`; target's mouseup handler posts `{type:'drop',
+  targetId, x:e.clientX, y:e.clientY}`. Parent's message listener
+  combines lastDragSource with the drop payload into a `drops[]`
+  entry. Verifier: a drops entry exists with sourceId='beta' and
+  targetId='slot-2' and non-zero coords. Cheat dispatches a
+  frame-local MouseEvent (`new srcIframe.contentWindow.MouseEvent(...)`,
+  same for dst) so `event.view` matches the iframe's window.
+- Server: added `/modal-stack`, `/conditional-form`, `/iframe-drag`,
+  `/iframe-drag/source`, `/iframe-drag/target` routes plus
+  `POST /__conditional/submit` (with the cross-check above) and
+  `GET /__conditional/last` to `tasks/fixtures/server.ts`. `/__reset`
+  also clears the conditional receipt.
+- Tests:
+  - `harness/ts/tests/fixtures_server.test.ts` extended: page-marker
+    assertions for each new route (HTML check), conditional
+    round-trip + 400 paths (wrong country/id pairing rejected, wrong
+    path order rejected), yaml-spec loader iterates over all 6 hard
+    fixtures.
+  - `harness/ts/tests/fixtures_sanity.test.ts` extended with three
+    new fixture cases (modal-stack, conditional-form, iframe-drag).
+    For each: trivial click-first-link DECLINES (no anchors anywhere;
+    parent of iframe-drag has no top-level `<a>` and querySelectorAll
+    doesn't pierce iframes), so the verifier reports false. The cheat
+    closures click the modal sequence in order / fill+submit the
+    conditional form path / dispatch frame-local mousedown+mouseup,
+    and the verifier reports true.
+- `make eval AGENT=trivial SLICE=hard` now reports total=6 passed=0
+  failed=6, all DECLINED — the AC-required failure half.
+- Files changed/added:
+  - new: tasks/fixtures/pages/{modal_stack,conditional_form,
+    iframe_drag}.ts
+  - new: tasks/suite/hard/{modal-stack,conditional-form,
+    iframe-drag}.yaml
+  - tasks/fixtures/server.ts (3 new pages, 2 new state endpoints,
+    cross-check validation, ConditionalReceipt type)
+  - harness/ts/tests/fixtures_server.test.ts (extended page check,
+    new conditional round-trip test, all-6-yaml loader assertion)
+  - harness/ts/tests/fixtures_sanity.test.ts (three new fixture
+    cases with cheat closures)
+  - tasks/CLAUDE.md (irreversible tag note + multi-page fixture
+    pattern)
+  - prd.json, progress.txt
+- Quality checks: `npm run typecheck` clean; `npm test` 91/91
+  passing (7 new); `uv run pytest -q` 7/7 unchanged.
+- **Learnings for future iterations:**
+  - When a fixture has a true one-way state transition, tag the YAML
+    `irreversible`. The eval/tournament runner doesn't read this yet
+    but US-010's per-task budget enforcement and any future "rollback
+    a step" agent can branch on it.
+  - For cross-iframe interactions, dispatching a parent-scope
+    `MouseEvent` to an element inside an iframe produces an event
+    whose `view` is the parent — some Chromium event paths reject
+    this. Use the iframe's own constructor:
+    `new srcIframe.contentWindow.MouseEvent(...)`. Same trick will
+    apply to KeyboardEvent / DragEvent / FocusEvent in future
+    fixtures.
+  - postMessage delivery is async, so any cheat (and any real agent)
+    that asserts on parent-window state after firing in a child
+    frame MUST poll for delivery. Tight 30ms*30 retry budget is
+    enough for our fixtures; tune up only if a future fixture
+    chains messages.
+  - The conditional-form pattern (server cross-checks a `path`
+    array AND validates per-branch fields) is the cleanest way to
+    enforce that an agent didn't bypass the client-side flow. Reuse
+    this pattern whenever a future fixture's value cannot be
+    validated by simple field-equality — encode the gating order
+    into the payload and check it server-side.
+  - The trivial click-first-link agent DECLINES on every fixture
+    that has no top-level `<a>` (it scopes to `document.querySelectorAll('a')`
+    which does NOT cross iframe boundaries). Hostile pages with
+    only buttons / inputs / iframes therefore reliably fail the
+    trivial agent without needing decoy anchors. New US-008
+    fixtures can keep relying on this.
+  - `assert.ok(task.tags.includes('hard'))` style smoke tests over
+    the entire `hard/*.yaml` set lets future fixture additions pick
+    up loader regressions automatically; the `hardSpecs` array is
+    the single source of truth for the slice and should be updated
+    in lockstep with the directory.
 ---

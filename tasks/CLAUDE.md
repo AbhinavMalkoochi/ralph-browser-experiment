@@ -29,7 +29,20 @@ Add a new hostile page in three steps:
    - `verifier.kind: js` is preferred; `expression` runs in the page with
      `awaitPromise=true`, so `fetch('/__feature/last').then(j => …)` is fine.
    - Required tags: `hard`, `fixtures`, plus skill-specific ones
-     (`shadow_dom`, `canvas`, `virtualization`, etc.).
+     (`shadow_dom`, `canvas`, `virtualization`, etc.). Add `irreversible`
+     when the fixture has a one-shot terminal transition (modal-stack
+     after a decoy click; conditional-form after submit).
+
+### Multi-page fixtures (iframes etc.)
+
+For fixtures that compose several pages (e.g. iframe-drag is parent +
+two child frames), export each page as a separate `*_HTML` constant and
+register a route per page (`/foo`, `/foo/source`, `/foo/target`). Use
+`window.parent.postMessage(...)` from the children to relay state to a
+listener on the parent's `window.__test`; the parent records the
+canonical state for the verifier to read. postMessage delivery is
+asynchronous, so cheats (and any agent) must poll for a few frames
+before asserting the parent has caught the message.
 
 ## Server lifecycle
 

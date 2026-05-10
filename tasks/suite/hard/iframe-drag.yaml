@@ -1,0 +1,20 @@
+id: hard-iframe-drag
+goal: |
+  The page hosts two same-origin iframes side by side. The left iframe
+  (#src) contains three draggable boxes labelled "alpha", "beta", and
+  "gamma". The right iframe (#dst) contains three drop slots labelled
+  "slot-1", "slot-2", and "slot-3". Drag the "beta" box from #src and
+  drop it on the "slot-2" target in #dst. Each frame posts state to the
+  parent window via postMessage; successful drops accumulate at
+  window.__test.drops as {sourceId, targetId, x, y, droppedAt} entries.
+start_url: "fixtures://iframe-drag"
+difficulty: hard
+tags:
+  - hard
+  - fixtures
+  - iframe
+  - drag_drop
+  - cross_frame
+verifier:
+  kind: js
+  expression: "Boolean(window.__test && Array.isArray(window.__test.drops) && window.__test.drops.some(d => d && d.sourceId === 'beta' && d.targetId === 'slot-2' && Number(d.x) > 0 && Number(d.y) > 0))"
