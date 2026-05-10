@@ -38,7 +38,7 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   reader. Already handled inside `_dispatch_request`.
 - Tests: `make test` now runs both `npm test` (TS) and `uv run pytest` (Python).
   TS tests under `harness/ts/tests/*.test.ts`; Python tests under
-  `harness/python/tests/test_*.py`.
+   ./scripts/ralph/ralph.sh --tool claude 5 `harness/python/tests/test_*.py`.
 - BrowserSession.evaluate: `Runtime.evaluate` returns a result whose shape can
   contain `exceptionDetails` if the page expression throws. Always check that and
   re-raise; otherwise the caller silently sees `undefined` for thrown evaluations.
@@ -320,6 +320,33 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   action; the loop continues for up to maxSteps. parse_error is
   similarly recorded as a step (action.type='parse_error') and
   re-prompted. Avoids dead-ends from one transient bad turn.
+- Plan-then-execute agent (US-014) at agents/plan-then-execute/.
+  Two files: script.ts (DSL parser, in-page executor, classifier —
+  was pre-staged in this repo from an earlier aborted iteration) and
+  agent.ts (Agent subclass: snapshot URL+title → one LLM call → execute
+  plan → bounded repair on hard_fail). Distinct mechanism from baseline:
+  batch planning vs ReAct, text-keyed selectors vs aid-keyed. classify()
+  in script.ts distinguishes hard_fail (click_text/type/goto miss) from
+  soft_fail (extract/scroll/wait_for_text miss); only hard_fail triggers
+  a repair LLM call. Plan content is captured as a trajectory step with
+  action.type='plan' and phase in {'initial','repair'} so postmortems
+  do not need to gunzip the LLM cache to see what the plan was.
+- DSL pattern for novel agents: a per-agent script.ts that owns its own
+  in-page resolution scripts (CLICK_BY_TEXT, TYPE_BY_LABEL, WAIT_FOR_TEXT,
+  EXTRACT_SCRIPT, …) keeps the executor self-contained and the agent.ts
+  thin. The in-page scripts are template literals composed with
+  JSON.stringify(needle/value) at the call site — never string-concat
+  untrusted strings into the JS body. Each script returns
+  {ok:boolean, message:string, extracted?:string} so the agent gets a
+  uniform OpResult shape regardless of op kind.
+- Convention: every novel agent's manifest.yaml MUST list
+  distinct_from: [baseline-a11y-react, ...prior-slots] AND the test
+  suite SHOULD include an assertion that approach_keywords has 0%
+  Jaccard with the baseline. See plan_then_execute_agent.test.ts
+  "manifest: ... shares no approach_keywords" for the pattern. The
+  distinctness check in tournament/distinctness.ts also enforces this
+  at discovery time, but a unit test that compares manifests catches
+  drift earlier (e.g. when someone edits the baseline keywords).
 ---
 
 ## 2026-05-08 - US-001
@@ -1651,4 +1678,100 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     + extend SYSTEM_PROMPT in lockstep + add a parser branch +
     add a dispatch case. The ReAct loop in agent.ts doesn't need
     to change.
+---
+
+## 2026-05-10 - US-014
+- Shipped the first novel complete agent at agents/plan-then-execute/.
+  Mechanism: ONE LLM call emits the whole plan as a JSON array of
+  intent-keyed ops, the executor in script.ts resolves text → element
+  inside the page (DOM walk on visible name with label/placeholder
+  fallback for inputs), and a bounded repair loop (up to maxRepairs=2)
+  re-asks the LLM for a remaining-plan on hard_fail.
+- Files added:
+  - agents/plan-then-execute/agent.ts (Agent subclass; ReAct-free)
+  - agents/plan-then-execute/manifest.yaml (id/keywords/distinct_from)
+  - agents/plan-then-execute/README.md (~400 words, contrasts with
+    baseline-a11y-react across 5 axes; cites SayCan/ReWOO/Stagehand
+    inspirations and explicit trade-offs)
+  - harness/ts/tests/plan_then_execute_agent.test.ts (24 new tests)
+- Files unchanged but used as-is: agents/plan-then-execute/script.ts
+  was pre-staged in this repo (~534 LOC) from an earlier aborted
+  iteration. Its PlanOp union, parsePlan, classify, executePlanOp,
+  opLabel, opToRecord match the agent.ts contract exactly — no edits
+  needed.
+- approach_keywords = [plan_then_execute, batch_planning,
+  intent_keyed_selectors, text_resolution, single_turn_plan,
+  bounded_repair]. Jaccard overlap with baseline-a11y-react = 0/12 = 0,
+  well under the 0.5 distinctness threshold. The new test
+  "manifest: plan-then-execute distinct_from baseline ..." asserts
+  this so a future keyword refactor on either side cannot silently
+  break the distinctness claim.
+- Quality checks: `npm run typecheck` clean; `npm test` 231/231
+  (24 new); `uv run pytest -q` 7/7.
+- Live eval (gpt-4o-mini, default budgets):
+  - easy slice: 21/22 PASS in 63s. The single failure
+    (easy-httpbin-form) is a form where input fields have neither
+    `<label>` nor `placeholder` — the text resolver in TYPE_BY_LABEL
+    falls through to `name` attribute matching, which the LLM doesn't
+    know to use without an a11y snapshot. Documented as a known
+    weakness in README.md trade-offs section.
+  - hard slice: 2/10 PASS in 85s. hard-late-hydration passes via the
+    LLM's instinct to emit a wait_for_text op before assert_text.
+    hard-recoverable passes because the repair branch naturally
+    re-clicks the now-enabled submit after seeing the failure banner.
+    The other 8 fail on mechanism limits: shadow DOM (text resolver
+    cannot pierce), canvas (no DOM elements), conditional forms
+    (text resolver can't follow form-state changes that gate which
+    fields appear), popup contexts (CDP only attached to the parent),
+    PDF parsing (the agent has no PDF reader), iframe drag (no
+    cross-frame drag support), modal stack (text labels reused across
+    nested modals confuse the resolver), virtual scroll (extract on
+    a virtualised list misses non-rendered rows).
+  - Both AC thresholds met (≥3/20 easy, ≥1/10 hard) without needing
+    the failure-analysis fallback.
+- Trajectories generated at runs/plan-then-execute/{easy-*,hard-*}/0/
+  trajectory.jsonl.gz (32 files, 516K). Not committed because
+  .gitignore excludes runs/ (US-001 AC) — consistent with the
+  US-013 precedent of running smokes but not checking in artefacts.
+  If a future iteration needs to commit canonical traces (e.g. for
+  US-022's failure mining), allow a per-agent best-of-N exception
+  rather than committing every run.
+- **Learnings for future iterations:**
+  - When a novel agent's plan is multi-step (vs the baseline's
+    one-action-per-turn), recording the plan itself as a trajectory
+    step with action.type='plan' and a phase field
+    ('initial' | 'repair' | ...) makes postmortems possible without
+    gunzipping the LLM cache. Future agents that emit any
+    cross-step artefact (skill, hypothesis, world-model update)
+    should follow the same pattern.
+  - The repair-loop shape (initial plan → execute → on hard_fail
+    snapshot+repair_call → execute remaining) is a general control
+    pattern for agents that batch decisions. To avoid runaway
+    loops, cap repairs explicitly AND require each repair to
+    produce a NEW plan from the current page (do NOT let the LLM
+    re-emit the original plan). The wrapper here pulls a fresh
+    URL+title before the repair LLM call so the prompt actually
+    differs.
+  - script.ts in-page resolution scripts MUST quote needles via
+    JSON.stringify to avoid `</script>`-style injections (the in-page
+    body runs in the DOM context, so string concat is unsafe). All
+    five resolvers in plan-then-execute/script.ts follow this rule.
+  - classify(op, result) is the linchpin: extract/scroll/wait_for_text
+    miss → soft_fail (continue the plan); click_text/type/goto miss
+    → hard_fail (trigger repair). Without this distinction a single
+    failed assert_text or extract burns the repair budget for no
+    benefit. Future agents that add ops should classify them
+    deliberately — default "hard_fail when ok===false" is wrong.
+  - Hard-slice scorecard for this agent's mechanism reveals a clean
+    failure taxonomy useful for US-022 / future slots:
+      a11y-blind ops:    shadow DOM, canvas, virtual scroll
+      multi-context:     popup (multi-tab), iframe drag
+      stateful schemas:  conditional form (validation rules change)
+      label collisions:  modal stack (nested "Continue" buttons)
+      binary content:    pdf-task
+    A code-gen or world-model agent should target these explicitly.
+  - When live-testing a new agent, save `runs/<agent>/` to a tmpfs or
+    accept the ~500K cost — the JSONL traces are cheap to keep around
+    locally for the next iteration's failure mining even if not
+    committed.
 ---

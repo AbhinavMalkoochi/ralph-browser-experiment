@@ -1,0 +1,19 @@
+id: plan-then-execute
+language: typescript
+summary: |
+  First novel agent (US-014). Emits the WHOLE plan in one LLM call as a
+  JSON array of intent-keyed ops (click_text, type by label, assert_text,
+  …), then executes ops sequentially with selectors resolved INSIDE the
+  page by visible text rather than integer aids. A bounded repair loop
+  re-asks the LLM for a remaining-plan when an op hard-fails. Distinct in
+  core mechanism from baseline-a11y-react: batch planning vs per-step
+  ReAct, text-keyed selectors vs labelled-element snapshots.
+approach_keywords:
+  - plan_then_execute
+  - batch_planning
+  - intent_keyed_selectors
+  - text_resolution
+  - single_turn_plan
+  - bounded_repair
+distinct_from:
+  - baseline-a11y-react

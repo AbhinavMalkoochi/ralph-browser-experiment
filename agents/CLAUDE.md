@@ -126,6 +126,17 @@ trajectory.
   via the LLMClient cache. AGENT_ALIASES.baseline points here. Every
   novel agent (US-014..U-021) declares distinctness from this one.
 
+## Novel agents
+
+- `plan-then-execute/` — US-014, first novel slot. Batch planning
+  over intent-keyed (visible-text) selectors. ONE LLM call emits the
+  whole plan as a JSON array; the executor in `script.ts` resolves
+  text → element inside the page. A bounded repair loop (up to
+  `maxRepairs=2`) re-asks the LLM for a remaining-plan on hard_fail.
+  Plan content is recorded as a trajectory step with
+  `action.type='plan'` and `phase='initial' | 'repair'`. Live eval:
+  21/22 easy, 2/10 hard with gpt-4o-mini.
+
 ## Distinctness (US-012, enforced)
 
 `manifest.distinct_from` lists agent ids this agent claims a distinct
