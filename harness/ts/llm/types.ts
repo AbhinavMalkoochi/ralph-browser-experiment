@@ -7,9 +7,28 @@
 
 export type LLMRole = "system" | "user" | "assistant" | "tool";
 
+/**
+ * One element of a multimodal user message. Mirrors the OpenAI Chat
+ * Completions content-part shape so vision-capable models can be addressed
+ * without a wrapper protocol. Providers that only handle text (Gemini) MUST
+ * reject array content.
+ */
+export type LLMContentPart =
+  | { type: "text"; text: string }
+  | {
+      type: "image_url";
+      image_url: { url: string; detail?: "low" | "high" | "auto" };
+    };
+
 export interface LLMMessage {
   role: LLMRole;
-  content: string;
+  /**
+   * Either a plain string (the common case) or an array of content parts for
+   * multimodal calls. Array content currently only round-trips through the
+   * OpenAI provider — Gemini throws on it. Cache key is computed from the
+   * full structure either way.
+   */
+  content: string | LLMContentPart[];
 }
 
 export interface LLMOpts {

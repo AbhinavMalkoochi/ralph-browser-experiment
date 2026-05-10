@@ -1,0 +1,30 @@
+id: vision-grounded
+language: typescript
+summary: |
+  Fifth novel agent (US-018). Pure-pixel perception with absolute-coordinate
+  action dispatch. The LLM sees ONLY a JPEG screenshot of the viewport (no
+  DOM, no a11y tree, no element list, no Set-of-Marks overlay) and emits
+  actions keyed by absolute (x, y) viewport pixel coordinates. Actions are
+  dispatched at the OS event layer via Chrome DevTools Protocol Input.*
+  commands (Input.dispatchMouseEvent for clicks/moves/drag/wheel,
+  Input.dispatchKeyEvent for special keys, Input.insertText for typing).
+  Distinct on TWO axes from every prior slot: observation modality (pixels
+  vs DOM/a11y/text) AND action substrate (CDP Input events vs DOM
+  selectors / aids / in-page JS). The page never knows it is being
+  controlled by a script — it sees only synthetic mouse and keyboard
+  events. Trade-off: the LLM has to localise targets visually with no DOM
+  crutch, which is harder, but the same substrate works uniformly across
+  shadow DOM, canvas, iframes, and ordinary HTML.
+approach_keywords:
+  - vision_grounded
+  - screenshot_perception
+  - pixel_coordinate_actions
+  - cdp_input_events
+  - multimodal_llm
+  - dom_free_substrate
+distinct_from:
+  - baseline-a11y-react
+  - plan-then-execute
+  - runtime-codegen
+  - speculative-rollback
+  - predicate-driven

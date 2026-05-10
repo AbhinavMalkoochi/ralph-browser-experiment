@@ -460,6 +460,47 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   scriptedProvider stays parked on the LAST turn so an unexpectedly-
   short loop will burn LLM calls but not throw "out of turns" — see
   the "predicate stays false through maxSteps" test.
+- LLMMessage.content (US-018) is now `string | LLMContentPart[]` so
+  multimodal calls (OpenAI vision: text part + image_url part) round
+  trip through the harness. `LLMContentPart` is exported. The Gemini
+  provider explicitly throws on array content — only OpenAI is wired
+  for vision. Cache key (sha256 over stable-sort JSON) handles arrays
+  naturally; identical multimodal payloads round-trip record→replay
+  with cached=true (vision_grounded test asserts this).
+- OpenAI provider (US-018) gained transient-error retry: 429 + 5xx
+  trigger up to 5 retries with backoff = max(Retry-After header,
+  body's "try again in Xms" hint, exponential 500ms × 2^attempt
+  capped at 30s). Non-transient 4xx (e.g. 401) are NOT retried.
+  Vision agents need this — TPM limits get hit fast when each call
+  ships a screenshot. Tests at llm_providers.test.ts cover the
+  transient/non-transient split + max-attempts give-up.
+- Vision-agent gotcha: when the visible page state doesn't change
+  between actions (e.g. a click that fires a fetch but the response
+  isn't painted yet), JPEG bytes are bit-identical → cache key
+  matches → LLM returns cached "do the same thing again" → infinite
+  loop. Fix: include the step counter in the user prompt
+  (vision-grounded does this in buildMessages) so each call has a
+  fresh cache key. Also add a small (200ms) post-action settle
+  before re-observing so async fetch responses + paint actually land.
+- For an OpenAI vision call, image_url.detail trades token cost vs
+  localisation accuracy: "low" is a flat 85 tokens (good for TPM,
+  bad for small targets); "high" is 85 + (n_tiles × 170) on a 512×512
+  tile grid (~765 tokens for 800×600, much better resolution). For
+  vision agents that need to click anything smaller than ~150px,
+  "high" is required. "auto" can pick either based on size.
+- Pixel-localisation accuracy of generic vision LLMs (gpt-4o-mini,
+  gpt-4o) on novel page layouts is poor — both models center-bias
+  their x-coordinate estimates. Empirical evidence in
+  runs/vision-grounded/hard-recoverable/0/trajectory.jsonl.gz:
+  agent's thought is "click Submit order"; emitted coords are
+  (390,220); actual button is at ~(110,170). This is a known
+  research finding (WebVoyager's Set-of-Marks paper, ScreenSpot
+  benchmark). Do NOT expect a generic chat model to do un-augmented
+  pixel grounding well. Future vision agents should consider:
+  Set-of-Marks overlays (defeats the no-DOM-augmentation claim),
+  coordinate-grid overlays (preserves it but reframes the agent),
+  or purpose-trained GUI models (CogAgent, OS-Atlas) plumbed in via
+  a new LLMClient provider.
 ---
 
 ## 2026-05-08 - US-001
@@ -2197,4 +2238,133 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     out-of-turns. An unexpectedly-short loop should burn LLM calls
     silently rather than crash the test — see the
     "predicate stays false through maxSteps" test.
+---
+
+## 2026-05-10 - US-018
+- Shipped fifth novel agent: agents/vision-grounded/. Mechanism: pure
+  pixel perception (JPEG screenshot via Page.captureScreenshot, no
+  DOM/a11y/element-list/Set-of-Marks) with absolute-coordinate action
+  dispatch via CDP Input.* events (Input.dispatchMouseEvent for
+  clicks/moves/drag/wheel, Input.dispatchKeyEvent for special keys
+  including Enter with text="\r" so implicit form submission fires,
+  Input.insertText for typing). Distinct on TWO axes from every prior
+  slot: observation modality (pixels vs DOM/a11y/text) AND action
+  substrate (CDP Input events vs DOM selectors/aids/in-page JS).
+- Files: agent.ts (main loop with 200ms post-action settle, step
+  counter in prompt to defeat cache-stuck loops), actions.ts (10-action
+  union with tolerant JSON parser, alias normalisation, coord clamping;
+  CDP Input dispatcher with 8-step interpolated drag, special-key
+  table), observe.ts (viewport meta + JPEG capture + base64 data URL
+  builder), manifest.yaml, README.md (with required §Novelty and full
+  §Failure analysis sections).
+- Harness changes (kept minimal, intentional, scoped):
+   * harness/ts/llm/types.ts: LLMMessage.content extended to
+     string | LLMContentPart[]. New LLMContentPart union mirrors
+     OpenAI's text/image_url shape. Cache key (sha256 over stable-sort
+     JSON) handles arrays naturally — tested with record→replay
+     round-trip.
+   * harness/ts/llm/providers/gemini.ts: throws clearly on array
+     content; Gemini's contents/parts shape is too different to map.
+   * harness/ts/llm/providers/openai.ts: passes array content through
+     unchanged; gained 429 + 5xx retry-with-backoff (parses
+     Retry-After + body's "try again in Xms"; default maxRetries=5
+     gives ~15.5s of cumulative wait). Vision calls hit TPM limits
+     readily; this protects every agent that uses gpt-4o*.
+- Tests: harness/ts/tests/vision_grounded_agent.test.ts (45 new —
+  parseAction full coverage incl. 9 alias variants, coord clamping,
+  scroll direction shorthand, drag from_x/to_x aliases, type/press/
+  navigate missing-field rejection; actionLabel; executeAction on
+  real Chrome covering click+onclick, type-into-focused-input,
+  press("Enter") submitting a form via implicit submission,
+  scroll(x,y,dy) advancing scrollY, drag generating intermediate
+  mousemove events; observePage round-tripping JPEG magic bytes;
+  buildMessages multimodal default vs override + empty-screenshot
+  text fallback; LLMClient cache key handling multimodal content
+  bit-for-bit; 6 end-to-end runs incl. parse-error mid-loop recovery,
+  no-LLM DECLINED, tight-budget BUDGET_EXCEEDED; manifest distinctness
+  vs ALL FIVE prior agents Jaccard=0). Plus 5 new in
+  llm_providers.test.ts (429 retry hint + give-up + 4xx no-retry +
+  multimodal pass-through + Gemini array-rejection). 401 TS tests +
+  7 Python tests passing (45 new in vision file, 5 new in providers
+  file = 50 new).
+- Live results (gpt-4o-mini, temperature=0, image_detail=high,
+  200ms post-action settle):
+   * Easy slice: 20/22 PASS in 202s. 2 fails: easy-httpbin-form
+     (BUDGET_EXCEEDED — small inputs; agent can't localise the
+     submit button accurately enough), easy-rfc-791 (BUDGET_EXCEEDED
+     — agent navigated away from start_url before the verifier got a
+     match). Above the ≥3/20 threshold by a wide margin.
+   * Hard slice: 0/10 PASS in 445s. All 10 cleanly DECLINED (max
+     steps exhausted), no ERRORs. Below the ≥1/10 threshold — ships
+     under the AC #4 "OR documented failure analysis" branch.
+- Failure analysis (full text in README's §Failure analysis): the
+  mechanism works (e2e tests + easy slice prove it). The hard-slice
+  0/10 is bounded by gpt-4o-mini's pixel-localisation accuracy.
+  Sampled trajectory (runs/vision-grounded/hard-recoverable/0/
+  trajectory.jsonl.gz): agent's `thought` reads "Click the 'Submit
+  order' button"; emitted coords are (390, 220); the actual button
+  is at ~(110, 170) — a centre-biased x error of ~280 pixels. Same
+  pattern in modal-stack ((610, 370) on every click, well past the
+  "Next" button), canvas-drag, recoverable. Tried gpt-4o (~10× the
+  cost) — same failure mode, marginally less variance. Tried
+  detail=high (already the default) — helps text reading, not
+  coord emission. This matches public literature: WebVoyager,
+  SeeAct, Operator, AppAgent all use Set-of-Marks (numbered DOM-
+  derived overlays) precisely because un-augmented pixel grounding
+  is structurally weak in generic chat models. Only purpose-trained
+  GUI models (CogAgent, OS-Atlas, Claude Computer Use) clear that
+  bar.
+- Trajectories at runs/vision-grounded/{easy-*,hard-*}/0/trajectory.
+  jsonl.gz — 32 files. Not committed (runs/ is gitignored, consistent
+  with US-013..U-017 precedent).
+- Quality checks: typecheck clean; npm test 401/401 (50 new); pytest
+  7/7. agents/CLAUDE.md updated with the new agent's section.
+- **Learnings for future iterations:**
+  - When extending a shared type used across many agents (LLMMessage.
+    content here), tag the call sites that ASSUMED the old type with
+    a clear cast at the boundary rather than try to widen everywhere.
+    The Gemini provider casts `m.content as string` after a runtime
+    check that throws on arrays — keeps the existing string-only
+    code path's type narrowed inside the function.
+  - For multimodal cache hashing, the hash already works because
+    cache.ts's stableSort recurses into nested objects. No special-
+    casing needed for content arrays. Test this explicitly with a
+    record-then-replay-with-same-payload assertion (see
+    vision_grounded_agent.test.ts "LLMClient: cache key handles
+    multimodal content").
+  - Vision agents will hit OpenAI's 200k TPM limit fast (each call
+    is ~3-15k tokens depending on detail tier). The provider-level
+    429 retry is mandatory; without it a multi-task slice will
+    ERROR midway. Default maxRetries=5 with parsed "try again in
+    Xms" hints clears the typical 60s TPM window.
+  - When the agent's visible page-state is bit-identical between
+    steps (cache key matches → LLM returns cached "do same thing"),
+    the agent gets stuck in an infinite loop. Two fixes that
+    together break the trap: (a) include a monotonically-increasing
+    step counter in the user prompt so cache keys differ across
+    steps even when the screenshot is unchanged, (b) add a
+    post-action settle delay (200ms here) so async post-action
+    effects (fetch response, banner reveal, DOM mutation) actually
+    land before the next observation.
+  - CDP Input.dispatchKeyEvent for Enter needs `text:"\r"` AND
+    type:"keyDown" (NOT rawKeyDown) so Chrome injects a keypress
+    event — without it implicit form submission silently fails.
+    Pure control keys (Tab, Escape, Arrows) don't need text and
+    can use type:"rawKeyDown". The KEY_TABLE in actions.ts encodes
+    this distinction with an optional `text` field per descriptor.
+  - For drag-and-drop via CDP, send the mousedown, then 8
+    intermediate mousemove events along the path, then mouseup.
+    HTML5 drag-and-drop libraries (react-beautiful-dnd, dnd-kit,
+    SortableJS) all listen for mousemove DURING a drag — a
+    press/release with no intermediate moves looks like a click,
+    not a drag, and they ignore it. Tested in vision_grounded_agent.
+    test.ts "executeAction drag generates intermediate mousemove
+    events".
+  - Generic vision LLMs (gpt-4o-mini, gpt-4o) cannot reliably do
+    un-augmented pixel grounding on novel pages. Don't ship a
+    vision-only agent with hard-slice success expectations unless
+    you (a) add Set-of-Marks (defeats the no-DOM novelty), (b) add
+    a coordinate grid overlay, or (c) plumb in a purpose-trained
+    GUI model. AC #4's "OR documented failure analysis" branch is
+    the right shipping path for un-augmented vision today.
 ---

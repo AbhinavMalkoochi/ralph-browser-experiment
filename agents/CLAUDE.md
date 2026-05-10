@@ -165,6 +165,28 @@ trajectory.
   slots by 1), 1/10 hard (recoverable — exactly where the judge
   shines). The 9 hard failures are substrate-bound (shadow/canvas/
   iframe/popup/PDF), not loop-bound — documented in README.
+- `vision-grounded/` — US-018, fifth novel slot. **Pure-pixel
+  perception with absolute-coordinate action dispatch.** The LLM sees
+  ONLY a JPEG screenshot of the viewport plus a small text banner
+  (URL, title, viewport size) — no DOM walk, no a11y tree, no element
+  list, no Set-of-Marks overlay. It emits actions keyed by absolute
+  `(x, y)` viewport pixel coordinates. Actions are dispatched at the
+  OS event layer via Chrome DevTools Protocol `Input.*` commands
+  (`Input.dispatchMouseEvent` for clicks/moves/drag/wheel,
+  `Input.dispatchKeyEvent` for special keys, `Input.insertText` for
+  typing). **Distinct on TWO axes** from every prior slot: observation
+  modality (pixels vs DOM/a11y/text) AND action substrate (CDP Input
+  events vs DOM selectors / aids / in-page JS). Live results
+  (gpt-4o-mini, detail=high, 200ms post-action settle): 20/22 easy,
+  0/10 hard. The hard-slice 0/10 is the documented-failure-analysis
+  branch of AC #4: gpt-4o-mini (and gpt-4o) systematically
+  centre-bias x-coordinates and mis-click small targets — a known
+  limitation of un-augmented vision LLMs that public-framework agents
+  (WebVoyager etc.) work around with Set-of-Marks overlays. The
+  README has the full empirical analysis. Required harness changes:
+  `LLMMessage.content` extended to `string | LLMContentPart[]` for
+  multimodal payloads, OpenAI provider gained 429-with-backoff retry
+  (defaults to 5 attempts, parses "try again in Xms" hints).
 - `predicate-driven/` — US-017, fourth novel slot. The LLM authors a
   JS PREDICATE upfront (one synthesis call); the agent loop polls the
   predicate in-page after every action and **terminates from CODE the

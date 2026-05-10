@@ -40,12 +40,25 @@ export class GeminiProvider implements LLMProvider {
   }
 
   async call(req: ProviderRequest): Promise<ProviderResponse> {
-    const systemMsgs = req.messages.filter((m) => m.role === "system").map((m) => m.content);
+    // Multimodal content-part arrays are an OpenAI-only feature in this
+    // harness. Gemini's contents/parts shape is different enough that the
+    // OpenAI part array would not round-trip; reject up front so a vision
+    // call accidentally routed at gemini-* fails loudly.
+    for (const m of req.messages) {
+      if (typeof m.content !== "string") {
+        throw new Error(
+          "Gemini provider only accepts string content; multimodal arrays are OpenAI-only",
+        );
+      }
+    }
+    const systemMsgs = req.messages
+      .filter((m) => m.role === "system")
+      .map((m) => m.content as string);
     const turn = req.messages.filter((m) => m.role !== "system");
 
     const contents = turn.map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
+      parts: [{ text: m.content as string }],
     }));
 
     const body: Record<string, unknown> = { contents };

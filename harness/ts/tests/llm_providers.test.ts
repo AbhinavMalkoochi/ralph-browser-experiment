@@ -142,6 +142,158 @@ test("GeminiProvider posts the right JSON, maps roles, and includes key in URL",
   assert.deepEqual(body.generationConfig?.stopSequences, ["\n"]);
 });
 
+test("OpenAiProvider retries 429 with the body's try-again hint then succeeds", async () => {
+  const captured: CapturedFetch[] = [];
+  const sleeps: number[] = [];
+  let attempt = 0;
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    captured.push({ url: typeof input === "string" ? input : input.toString(), init });
+    attempt += 1;
+    if (attempt === 1) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            message: "Rate limit reached. Please try again in 250ms.",
+            type: "tokens",
+          },
+        }),
+        { status: 429 },
+      );
+    }
+    return jsonResponse({
+      choices: [{ message: { content: "ok" } }],
+      usage: { prompt_tokens: 5, completion_tokens: 1 },
+    });
+  }) as unknown as typeof fetch;
+  const p = new OpenAiProvider({
+    apiKey: "sk-fake",
+    baseUrl: "https://api.example.test/v1",
+    fetchImpl,
+    sleep: (ms) => {
+      sleeps.push(ms);
+      return Promise.resolve();
+    },
+  });
+  const out = await p.call({
+    model: "gpt-4o-mini",
+    messages: [{ role: "user", content: "x" }],
+    opts: {},
+  });
+  assert.equal(out.text, "ok");
+  assert.equal(captured.length, 2, "second attempt after 429");
+  assert.equal(sleeps.length, 1);
+  // First attempt's backoff floor is 500ms; the body hint of 250ms is below
+  // the floor, so we expect the floor to win. (Body hint > floor would win.)
+  assert.ok(sleeps[0]! >= 500, `expected at least 500ms backoff, got ${sleeps[0]}`);
+});
+
+test("OpenAiProvider gives up after maxRetries and throws the last 429", async () => {
+  const sleeps: number[] = [];
+  const fetchImpl = (async () =>
+    new Response(
+      JSON.stringify({ error: { message: "rate limit" } }),
+      { status: 429 },
+    )) as unknown as typeof fetch;
+  const p = new OpenAiProvider({
+    apiKey: "sk-fake",
+    baseUrl: "https://api.example.test/v1",
+    fetchImpl,
+    maxRetries: 2,
+    sleep: (ms) => {
+      sleeps.push(ms);
+      return Promise.resolve();
+    },
+  });
+  await assert.rejects(
+    () =>
+      p.call({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: "x" }],
+        opts: {},
+      }),
+    /OpenAI 429/,
+  );
+  // 3 attempts (initial + 2 retries) → 2 sleeps.
+  assert.equal(sleeps.length, 2);
+});
+
+test("OpenAiProvider does NOT retry 4xx that are not 429", async () => {
+  let attempts = 0;
+  const fetchImpl = (async () => {
+    attempts += 1;
+    return new Response("bad request", { status: 400 });
+  }) as unknown as typeof fetch;
+  const p = new OpenAiProvider({
+    apiKey: "sk-fake",
+    baseUrl: "https://api.example.test/v1",
+    fetchImpl,
+    sleep: () => Promise.resolve(),
+  });
+  await assert.rejects(
+    () =>
+      p.call({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: "x" }],
+        opts: {},
+      }),
+    /OpenAI 400/,
+  );
+  assert.equal(attempts, 1, "no retry on non-transient 4xx");
+});
+
+test("OpenAiProvider passes multimodal array content through unchanged", async () => {
+  const captured: CapturedFetch[] = [];
+  const fetchImpl = makeFetch(captured, () =>
+    jsonResponse({
+      choices: [{ message: { content: "{\"type\":\"finish\"}" } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    }),
+  );
+  const p = new OpenAiProvider({
+    apiKey: "sk-fake",
+    baseUrl: "https://api.example.test/v1",
+    fetchImpl,
+  });
+  await p.call({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: "x" },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "look" },
+          { type: "image_url", image_url: { url: "data:image/jpeg;base64,/9j/AAA=" } },
+        ],
+      },
+    ],
+    opts: {},
+  });
+  const body = JSON.parse(captured[0]!.init?.body as string) as {
+    messages: Array<{ role: string; content: unknown }>;
+  };
+  assert.ok(Array.isArray(body.messages[1]?.content), "array content preserved");
+});
+
+test("GeminiProvider rejects multimodal array content with a clear error", async () => {
+  const fetchImpl = (async () => jsonResponse({})) as unknown as typeof fetch;
+  const p = new GeminiProvider({
+    apiKey: "gem-fake",
+    baseUrl: "https://gen.example.test/v1beta",
+    fetchImpl,
+  });
+  await assert.rejects(
+    () =>
+      p.call({
+        model: "gemini-2.5-flash",
+        messages: [
+          { role: "user", content: [{ type: "text", text: "x" }] },
+        ],
+        opts: {},
+      }),
+    /multimodal arrays are OpenAI-only/,
+  );
+});
+
 test("GeminiProvider error includes status; LLMClient redaction is responsible for scrubbing", async () => {
   // We DON'T scrub at the provider layer. The provider's job is to surface
   // the error verbatim; the LLMClient redacts before it reaches the agent.

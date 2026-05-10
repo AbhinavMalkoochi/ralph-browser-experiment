@@ -14,6 +14,7 @@ export {
 } from "./types.js";
 export type {
   LLMMessage,
+  LLMContentPart,
   LLMOpts,
   LLMResult,
   LLMRole,
