@@ -119,6 +119,12 @@ trajectory.
 - `click-first-link/` — TS reference. Contract demo, not a tournament entry.
 - `click-first-link-py/` — Python sibling. Exercises the cross-language
   bridge end-to-end.
+- `baseline-a11y-react/` — US-013 honest control. A11y snapshot via
+  Runtime.evaluate (with stable `data-gba-aid` integer ids) + ReAct
+  loop + JSON action set (click / type / scroll / wait / navigate /
+  extract / finish). Default model is `gpt-4o-mini`; replays cleanly
+  via the LLMClient cache. AGENT_ALIASES.baseline points here. Every
+  novel agent (US-014..U-021) declares distinctness from this one.
 
 ## Distinctness (US-012, enforced)
 

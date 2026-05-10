@@ -1,0 +1,18 @@
+id: baseline-a11y-react
+language: typescript
+summary: |
+  Honest control reproducing the dominant 2026 open-source pattern
+  (browser-use, Stagehand, AgentE): one a11y-flavoured page snapshot per
+  step, an LLM that emits a single JSON action, a tight action set
+  (click / type / scroll / wait / navigate / extract / finish), and a
+  ReAct-style loop that grows a short text history. No code generation,
+  no skill library, no world model — every novel agent in this repo
+  declares distinctness from this one.
+approach_keywords:
+  - a11y_snapshot
+  - react_loop
+  - json_actions
+  - interactive_labelling
+  - dom_centric
+  - control_baseline
+distinct_from: []

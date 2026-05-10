@@ -226,8 +226,8 @@
         "Tests pass"
       ],
       "priority": 13,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented at agents/baseline-a11y-react/{agent,actions,snapshot}.ts + manifest.yaml + README.md. The agent is the honest control: each step takes one in-page snapshot via Runtime.evaluate that walks every interactive element, marks it with a stable data-gba-aid attribute, and surfaces {role, accessible name, type/value/placeholder/href, visible/disabled} to the LLM as a numbered list. A single LLM turn (default gpt-4o-mini, temperature=0) emits one JSON action; the parser tolerates ```json fences + leading prose but rejects unknown action types. Action set: click(target) / type(target,text,submit?) / scroll(direction,pixels?) / wait(ms) / navigate(url) / extract(query) / finish(reason). LLM-unavailable + replay-miss both resolve to a clean DECLINED so the contract test runs without secrets. Browser-use, Stagehand, AgentE cited in README; differences (text-only, no skill library, no self-critique) called out. AGENT_ALIASES.baseline now points at baseline-a11y-react (was a click-first-link placeholder per the US-009 comment). Tests: 18 new in baseline_agent.test.ts (parser tolerance + edge cases, formatSnapshot rendering, real-Chrome ReAct loop with a scripted mock provider clicking aid=1 then finishing, type+submit form submission, no-LLM DECLINED path, tight-budget BUDGET_EXCEEDED short-circuit, snapshot tags interactive elements with monotonic data-gba-aid that persist across calls). Smoke: `eval AGENT=baseline SLICE=easy SEEDS=1` runs end-to-end on all 22 easy tasks (19/22 PASS without an LLM because the runner navigates first and easy verifiers check page content; 3 fail because they require interaction). 207 TS tests + 7 Python tests passing."
     },
     {
       "id": "US-014",

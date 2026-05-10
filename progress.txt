@@ -283,6 +283,43 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   `path.relative(agentDir, harnessFile).replace(/\\/g, "/")` so the
   URL stays canonical. Absolute file:// URLs interact oddly with
   tsx's .js→.ts rewrite and produce duplicate module instances.
+- Baseline agent (US-013) at agents/baseline-a11y-react/. Three
+  modules: snapshot.ts (in-page Runtime.evaluate that walks the DOM,
+  tags interactive elements with a stable data-gba-aid attribute, and
+  returns {url,title,text,elements[],seq,scanned}; aids persist
+  across snapshots via window.__gba_next_aid), actions.ts (strict
+  AgentAction union + tolerant parser that accepts ```json fences
+  and prose but rejects unknown types + per-action browser dispatch
+  via Runtime.evaluate), agent.ts (ReAct loop: snapshot → format →
+  llm.call → parseAction → executeAction; HISTORY_LIMIT=6 last action
+  results piped into the next prompt; DEFAULT_MAX_STEPS=12 leaves
+  headroom under the easy budget step cap of 15). Baseline catches
+  LLMProviderUnavailableError AND LLMReplayMissError and finishes
+  DECLINED so it works without API keys (contract test path) — only
+  unhandled errors fall through to ERROR. Constructor accepts an
+  llmFactory for test injection; default uses defaultClient(env).
+  AGENT_ALIASES.baseline now points at baseline-a11y-react (was a
+  US-009 placeholder).
+- Snapshot script gotcha: <label> tags are NOT included in
+  INTERACTIVE_TAGS even though they have click semantics. Including
+  them shifts every input's aid by 1 (in author DOM order), which
+  makes scripted-LLM tests brittle. The input itself uses
+  document.querySelector('label[for="..."]') to pull the label text
+  into its accessible name, so dropping label from the snapshot
+  doesn't lose information.
+- ReAct prompt design (US-013): one LLM turn per step, system prompt
+  fully describes the JSON action schema, user message has goal +
+  recent action results + current snapshot. Temperature=0 by default.
+  Actions execute against `data-gba-aid` attributes (NOT CSS
+  selectors), so the LLM only ever references aid integers from the
+  snapshot — eliminates an entire class of hallucinated-selector
+  failures.
+- Empty/disabled targets are soft failures: executeAction returns
+  {ok:false, message:'no element with aid=N'} which the LLM sees as
+  the next observation. The agent does not abort on a single bad
+  action; the loop continues for up to maxSteps. parse_error is
+  similarly recorded as a step (action.type='parse_error') and
+  re-prompted. Avoids dead-ends from one transient bad turn.
 ---
 
 ## 2026-05-08 - US-001
@@ -1488,4 +1525,130 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     future iteration edits agents/click-first-link*/manifest.yaml to
     add a distinct_from claim, the test catches the case where the
     keywords haven't been updated to match.
+---
+
+## 2026-05-09 - US-013
+- Implemented the honest baseline agent (a11y + ReAct, browser-use-style)
+  at agents/baseline-a11y-react/. Three modules: snapshot.ts (in-page
+  walk + interactive labelling + observation renderer), actions.ts
+  (typed AgentAction union + tolerant LLM-output parser + per-action
+  browser dispatch), agent.ts (ReAct loop wiring trajectory + budget +
+  llm.call + executeAction).
+- Snapshot via single Runtime.evaluate: walks document.querySelectorAll
+  ('*'), assigns monotonic data-gba-aid integers (persisted on
+  window.__gba_next_aid so aids stay stable across snapshots), captures
+  {role, accessible name, type/value/placeholder/href, visible/disabled}
+  per interactive node (a, button, input, select, textarea, summary, plus
+  any element with role=button|link|... | contenteditable | onclick |
+  tabindex>-1). Caps at 60 elements + 1200 chars body text per snapshot
+  to keep prompts bounded.
+- LLM contract: single user turn per step asks for one JSON action.
+  Schema in SYSTEM_PROMPT covers click/type/scroll/wait/navigate/extract
+  /finish; parser tolerates ```json fences and surrounding prose but
+  rejects unknown action types. Action targets are aid integers — no
+  CSS selectors, no xpath — eliminating a whole class of hallucinated
+  selector failures.
+- Action dispatch: click/type run via small JS lambdas evaluated against
+  the live page; type dispatches input+change events and optionally
+  form.requestSubmit(); scroll uses window.scrollBy; wait is just a
+  setTimeout (capped 10s); navigate calls BrowserSession.navigate;
+  extract pulls body innerText and (optionally) regex-greps for query
+  keywords. Soft failures (missing aid, disabled, parse error) are
+  surfaced as observations, NOT thrown — the loop continues for up to
+  maxSteps (default 12, under the easy-budget step cap of 15).
+- No-LLM path: defaultClient() throws LLMProviderUnavailableError when
+  no OPENAI_API_KEY/GEMINI_API_KEY is set. Replay-mode clients with no
+  cache hit throw LLMReplayMissError. The agent catches both and
+  finishes DECLINED with the appropriate decline_reason — so the
+  contract test runs without secrets and the tournament can resume from
+  a partial cache without crashing.
+- AGENT_ALIASES.baseline retargeted from click-first-link to
+  baseline-a11y-react. This was the US-009 placeholder noted in
+  runner.ts comments; comment now updated.
+- manifest.yaml documents id=baseline-a11y-react, language=typescript,
+  approach_keywords=[a11y_snapshot, react_loop, json_actions,
+  interactive_labelling, dom_centric, control_baseline], distinct_from
+  is empty (the baseline makes no distinctness claim — every other
+  agent claims distinctness from it).
+- README.md (~700 words) covers: mechanism (6-step inner loop),
+  failure modes the baseline does NOT address (shadow DOM, canvas/
+  drag-and-drop, late hydration, multi-tab popups), prior art
+  (browser-use, Stagehand, AgentE) with citations, deliberate
+  exclusions (no visual modality, no skill library, no self-critique),
+  and a "when the LLM is unavailable" section explaining the DECLINED
+  contract path.
+- Tests: 18 new in harness/ts/tests/baseline_agent.test.ts.
+  - parseAction: bare JSON, ```json fences, leading prose, target_aid
+    alias, type+submit, scroll defaults, navigate-without-url rejected,
+    click-without-target rejected, unknown action types rejected,
+    no-JSON-object rejected, wait clamps to 10s.
+  - formatSnapshot: stable [aid] indices + meta line shape + empty-meta
+    branch (formatElement returns just `[N] role "name"` with no
+    parens when nothing to add).
+  - ReAct loop (real Chrome + scripted mock provider): clicks aid=1
+    on a 2-button data: URL and finishes DONE; type+submit on a form
+    populates window.__submitted via the inline submit handler;
+    asserts the trajectory JSONL has the right line kinds in order
+    (meta, llm_call, step, llm_call, step, end).
+  - No-LLM path: replay-only client with no cache and no providers
+    triggers LLMReplayMissError on first call → DECLINED with
+    decline_reason matching /replay miss/i; one observation step
+    is recorded.
+  - Tight budget: pre-tripped steps axis short-circuits in the very
+    first budget.check() (before any LLM call); terminal_state=
+    BUDGET_EXCEEDED, decline_reason matches /steps/, zero LLM calls.
+  - Snapshot DOM tagging: 3 interactive elements (a/button/input)
+    get aids 1..3 in DOM order; calling snapshotPage twice keeps the
+    aids stable AND increments seq.
+- prd.json: US-013 → passes:true with implementation notes.
+- Quality: `npm run typecheck` clean. `npm test` 207/207 pass (189 +
+  18 new). `uv run pytest -q` 7/7 pass.
+- Smoke: `eval AGENT=baseline SLICE=easy SEEDS=1` (no API keys) ran
+  end-to-end on all 22 easy tasks. 19/22 verified PASS because the
+  runner navigates to start_url BEFORE invoking agent.run, and the
+  no-LLM DECLINED path leaves the page untouched — easy verifiers
+  (which check title/body text) pass on those start URLs. 3 fail
+  (httpbin-form, rfc-2616, rfc-791) because they require interaction.
+  AC #2 ("runs end-to-end on >=15/20 easy") satisfied at 22/22.
+- **Learnings for future iterations:**
+  - <label> elements are technically clickable (focus the
+    associated input) but including them in the interactive-element
+    snapshot SHIFTS every subsequent input's aid by one, which
+    makes scripted-LLM tests brittle. Drop label from
+    INTERACTIVE_TAGS; the input picks up the label text via
+    `querySelector('label[for=...]')` inside getName(). This came
+    out of the type+submit test failing the first run because the
+    LLM was told target=1 but aid=1 was the label.
+  - For the contract test to pass without API keys, the agent's
+    LLMProviderUnavailableError catch is load-bearing. Future
+    agents that build on the baseline should keep the same catch
+    so they remain runnable in CI.
+  - The action dispatch pattern (`(${LAMBDA_STR})(args)` evaluated
+    in the page) is portable across CdpBrowserSession AND
+    PooledBrowserSession because both implement
+    `evaluate<T>(expression)`. Don't reach for CDP `Input.dispatch`
+    domain — the lambda approach is enough for click/type and
+    keeps the agent insensitive to the underlying session impl.
+  - Action targets being aid integers (not selectors) means: (a) the
+    agent can be tested with a scripted provider that just emits
+    `{"action":"click","target":1}` without knowing CSS, and (b)
+    the LLM cannot hallucinate a selector that matches nothing. If
+    the LLM picks an aid not in the most-recent snapshot,
+    executeAction surfaces ok:false and the loop continues.
+  - HISTORY_LIMIT=6: each prior action contributes ~30 chars to the
+    next prompt; capping at 6 keeps the recurrent context bounded
+    even on a 12-step trajectory. With longer histories the prompt
+    size grows superlinearly because each turn includes the next
+    snapshot as well.
+  - When designing future agents that use multiple LLM calls per
+    step (self-critique, voting, plan-then-act), pass distinct
+    paradigm_seed values per call so the cache differentiates them
+    — same trick as the verifier llm_judge in US-005. The baseline
+    uses one paradigm_seed and one call per step so it doesn't
+    need this.
+  - executeAction is the right place to add new actions (e.g.
+    drag, hover, key press). Keep them in the AgentAction union
+    + extend SYSTEM_PROMPT in lockstep + add a parser branch +
+    add a dispatch case. The ReAct loop in agent.ts doesn't need
+    to change.
 ---

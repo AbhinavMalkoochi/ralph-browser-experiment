@@ -25,16 +25,13 @@ import {
 
 /**
  * Built-in agent id aliases.
- * - `trivial`  → click-first-link  (US-002 reference / contract demo)
- * - `baseline` → click-first-link  (placeholder until US-013 ships
- *                                   `baseline-a11y-react`. The alias keeps
- *                                   `make eval AGENT=baseline SLICE=easy`
- *                                   working in the meantime — once US-013
- *                                   lands, retarget this entry.)
+ * - `trivial`  → click-first-link    (US-002 reference / contract demo)
+ * - `baseline` → baseline-a11y-react (US-013 honest control: a11y snapshot
+ *                                     + ReAct loop + JSON action set)
  */
 export const AGENT_ALIASES: Record<string, string> = {
   trivial: "click-first-link",
-  baseline: "click-first-link",
+  baseline: "baseline-a11y-react",
 };
 
 /** Per-difficulty default budgets. Mirrors US-010 AC #2; safe defaults for now. */
