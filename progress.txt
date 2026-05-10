@@ -393,6 +393,47 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   baseline) because each historical entry stores a ~200-char script
   excerpt PLUS the result message — more verbose per entry, so a
   shorter window stays under the prompt budget.
+- Speculative-rollback agent (US-016) at agents/speculative-rollback/.
+  Mechanism: every action is a SPECULATIVE TRIAL. Each step the agent
+  (1) captures client-side state (URL + localStorage + sessionStorage)
+  via Runtime.evaluate, (2) PROPOSER LLM emits K=2 candidate CSS-
+  selector actions, (3) executes the top candidate, (4) JUDGE LLM
+  (separate call) classifies the after-state as commit/revert/done,
+  (5) on revert, restoreState navigates back + rewrites storage, the
+  candidate's label is blacklisted, the next candidate is tried.
+  Distinct from prior slots on the LOOP axis: baseline never rolls
+  back, plan-then-execute commits the plan upfront, runtime-codegen
+  has neither judge nor restore.
+- Client-side restoreState is best-effort. Server-side mutations are
+  NOT undone — if a candidate POSTed to /__submit, the submission is
+  recorded server-side regardless. The judge still classifies based
+  on observed state, so the mechanism keeps the agent from REPEATING
+  a bad action even if it can't perfectly undo it. HttpOnly cookies
+  are explicitly out of scope (document.cookie can't read them and
+  we stay inside the page JS sandbox).
+- Opaque origins (data: URLs) throw SecurityError on localStorage
+  access. snapshot.ts wraps storage reads in try/catch so captureState
+  on a data: URL returns empty maps without throwing — restoreState
+  navigates back and silently no-ops on the storage write. Tests for
+  storage round-trip must use a real http origin (fixtures /__health
+  endpoint is fine).
+- Dual-LLM pattern (proposer + judge): two SEPARATE temperature=0
+  calls per attempted candidate, with different system prompts. The
+  judge sees {goal, state_before_digest, action_label, executor_result,
+  state_after_digest} and returns {verdict, reason}. Worst-case cost
+  per step with K=2 and one revert is 3 LLM calls (1 propose + 2
+  judge); on success it's 2.
+- Per-state blacklist: when a candidate's judge verdict is `revert`,
+  the canonical action label (e.g. `click(button#submit)`) goes into
+  a blacklist surfaced to the next proposer turn. On `commit` the
+  blacklist resets (we're in a new state). Capped at BLACKLIST_LIMIT
+  entries to keep prompts bounded.
+- Agent IDs MUST be unique in agents/ for auto-discovery; the directory
+  name IS the id and the manifest.id must match. data-* attributes
+  used by agent snapshots SHOULD also be unique (data-gba-aid is taken
+  by baseline, data-rollback-aid was avoided — speculative-rollback
+  does NOT tag elements in the DOM at all; it relies on CSS selectors
+  from LLM-authored output, which is itself a distinguishing choice).
 ---
 
 ## 2026-05-08 - US-001
@@ -1929,4 +1970,126 @@ Started: Fri May  8 09:48:39 PM CDT 2026
    - Eval timing reference for gpt-4o-mini @ temperature=0:
      ~4s/easy task, ~28s/hard task (cache warm: ~1s/easy, ~6s/hard).
      hard slice with 1 seed costs ~$0.04-0.08 in OpenAI tokens.
+---
+
+## 2026-05-10 - US-016
+- Built the third novel slot at agents/speculative-rollback/. Four TS
+  modules: snapshot.ts (captureState + restoreState via Runtime.evaluate;
+  URL + local/sessionStorage; try/catch around storage so opaque origins
+  return empty maps instead of throwing), observe.ts (page snapshot with
+  selector_hint per visible button/input — selector_hint is derived from
+  the element's id / name / aria-label / first class / type, NEVER from
+  a custom data-* attribute), actions.ts (CSS-selector action set:
+  click/type/scroll/wait/navigate/finish; tolerant JSON parser accepting
+  envelope/array/object/fence/prose/action-wrapper variants; per-action
+  rationale field for trajectory audit), agent.ts (main loop).
+- Loop shape: per step (capped at 10), capture state + observe, ask
+  PROPOSER LLM for up to K=2 candidates in one call, then iterate the
+  candidates: execute → safe re-observe → JUDGE LLM in a separate
+  temperature=0 call (different system prompt, sees state_before_digest +
+  action_label + executor_result + state_after_digest) → on `done` finish
+  DONE, on `commit` keep the new state and exit the candidate loop, on
+  `revert` call restoreState + add label to per-state blacklist + try
+  the next candidate. Blacklist resets on commit (we're in a new state).
+- Distinctness: approach_keywords = [speculative_execution,
+  state_snapshot_restore, progress_judging, dual_llm_judge,
+  revert_on_regret, branch_pruning]. Jaccard=0 vs baseline (a11y_snapshot,
+  react_loop, json_actions, interactive_labelling, dom_centric,
+  control_baseline), vs plan-then-execute (plan_then_execute,
+  batch_planning, intent_keyed_selectors, text_resolution,
+  single_turn_plan, bounded_repair), vs runtime-codegen (code_generation,
+  in_page_runtime, js_emission, runtime_evaluate, script_action,
+  no_action_vocabulary, llm_codegen). distinct_from lists all three.
+- LLM error handling lives in `declineOnLlmError(err, trajectory, step,
+  obs, latency)`: async helper that converts LLMProviderUnavailableError
+  or LLMReplayMissError into a clean DECLINED finish; awaited at every
+  llm.call() boundary (proposer AND judge). Without `await`, the
+  trajectory.finish call races the agent's return path and you can get
+  `terminal_state: null` in tests — fixed inline early on.
+- Tests at harness/ts/tests/speculative_rollback_agent.test.ts. 27
+  tests, all pass:
+   * parseCandidates: envelope/array/single-object/```json fence/prose
+     tolerance, action-wrapper variant, unknown-type reject,
+     missing-selector reject, empty-list reject, empty-string reject,
+     wait-seconds + wait-clamp, scroll direction-default + pixel-clamp.
+   * parseJudge: commit/revert/done parse, fence tolerance, invalid
+     verdict reject, missing-JSON reject.
+   * captureState / restoreState on the fixtures /__health endpoint
+     (real http origin, storage round-trips before/after a simulated
+     revert; restore navigates back AND rewrites storage).
+   * captureState on a data: URL returns empty maps without throwing.
+   * End-to-end real-Chrome runs with a scripted dual-LLM provider:
+     (a) single-candidate commit → second step finishes DONE; (b)
+     two candidates where the judge reverts the first and commits the
+     second — asserts step records have verdict='revert' on the first
+     and verdict='commit' on the second, candidate_index=0 vs 1, and
+     window.__clicked === 'good' after restoreState ran; (c) judge
+     says done immediately after first action; (d) proposer parse_error
+     does NOT abort the loop; (e) replay-only client declines cleanly;
+     (f) tight steps budget short-circuits to BUDGET_EXCEEDED with 0
+     LLM calls.
+   * Manifest distinctness assertion vs all three prior agents
+     (Jaccard=0 each).
+- Live eval (gpt-4o-mini, temperature=0):
+   * easy slice: 22/22 PASS in 469s. Beats runtime-codegen (21/22)
+     and plan-then-execute (21/22) — the judge LLM + CSS selectors
+     successfully click through the httpbin form that defeats prior
+     agents.
+   * hard slice: 1/10 PASS in 294s (hard-recoverable). The single
+     win exercises the rollback path end-to-end: 500 error → judge
+     classifies as revert → restoreState → next candidate is the
+     retry submit → succeeds.
+- The 9 hard failures are mechanism-bound to the CSS-selector substrate:
+  shadow DOM (shadow-form), canvas mouse-event dispatch (canvas-drag),
+  cross-frame postMessage choreography (iframe-drag), virtualised
+  scroll-then-click past 200 rows (virtual-scroll), binary PDF parsing
+  (pdf-task), branching FSM with off-by-one decoy buttons
+  (modal-stack), conditional-validation cross-checks (conditional-form),
+  hydration wait (late-hydration), popup target attachment
+  (multi-tab). Documented in the README's 'Live results' section as
+  voluntary failure analysis — both AC thresholds (>=3/20 easy and
+  >=1/10 hard) are met regardless.
+- Files changed: agents/speculative-rollback/{agent,actions,observe,
+  snapshot}.ts, agents/speculative-rollback/{manifest.yaml,README.md},
+  harness/ts/tests/speculative_rollback_agent.test.ts, agents/CLAUDE.md
+  (added Novel agents bullet for speculative-rollback), prd.json,
+  progress.txt.
+- Quality checks: `npm run typecheck` clean; `npm test` 280→307 passing
+  (27 new); `uv run pytest -q` 7/7 passing.
+- **Learnings for future iterations:**
+  - The fixtures server's /__health endpoint is the right harness for
+    testing client-side storage code: it's a real http origin so
+    localStorage/sessionStorage actually persist, and it's already in
+    the test infrastructure so you don't need to spin up a side
+    server. Use it whenever you need a non-opaque origin in a test.
+  - When an agent makes multiple LLM calls per step, the
+    LLMProviderUnavailable / LLMReplayMiss decline path MUST be
+    reachable from EVERY call site, not just the first one. Easy to
+    miss the judge call. Pull the decline logic into an async helper
+    and await it at every boundary.
+  - When the proposer-judge pattern wants the LLM to discriminate
+    between distinct candidates, surface a stable per-action `label`
+    string (e.g. `click(button#submit)`) in BOTH directions: into the
+    judge's prompt for "the action that was taken" and into the
+    blacklist so a follow-up proposer turn picks differently. Without
+    a canonical label, the proposer keeps re-proposing the same action
+    in slightly different JSON forms.
+  - Multi-LLM-per-step agents are CHEAP if the prompts are cache-
+    stable. The judge's per-call cost is dominated by the system
+    prompt (which never changes) so the OpenAI prompt cache amortises
+    it across the run. A 10-step hard task with K=2 cost <$0.05.
+  - hard-recoverable is the canonical "rollback mechanism wins"
+    fixture: it has a transient failure (500) followed by a recovery
+    path (200 on retry) and a visible error banner — perfect for any
+    agent whose loop can distinguish "regress" from "no progress."
+    Other hard fixtures need the substrate (shadow, canvas, iframe,
+    popup, PDF) more than they need the loop shape.
+  - Agents that resolve elements via LLM-emitted CSS selectors are
+    surprisingly competitive on the easy slice (22/22 with the judge
+    catching weak attempts), but blocked entirely on the hard slice
+    fixtures that need shadow/canvas/iframe access. The next novel
+    slot should consider an action substrate that retains rollback
+    discipline but reaches deeper into the page (e.g. JS bodies +
+    judge, or a hybrid that emits both CSS selectors AND shadow/canvas
+    escape hatches).
 ---

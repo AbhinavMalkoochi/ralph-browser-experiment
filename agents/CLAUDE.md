@@ -147,6 +147,24 @@ trajectory.
   observation, giving a one-turn self-correcting retry path. Live
   eval: 21/22 easy, **5/10 hard** with gpt-4o-mini (shadow-form,
   virtual-scroll, modal-stack, late-hydration, recoverable).
+- `speculative-rollback/` — US-016, third novel slot. Every action is
+  a SPECULATIVE TRIAL. Per step: capture client-side state (URL +
+  localStorage + sessionStorage via Runtime.evaluate) → PROPOSER LLM
+  emits K=2 CSS-selector candidates → execute the top one → re-observe
+  → JUDGE LLM (separate temperature=0 call, sees before/after digests
+  + the action's canonical label) classifies as commit/revert/done →
+  on revert, restoreState navigates back + rewrites storage, the
+  action label joins a per-state blacklist, the next candidate is
+  tried. **Distinct on the LOOP axis**: prior slots never abandon a
+  misstep; this one explicitly snapshots a state, decides post-hoc
+  whether to keep the change, and reverts when the judge disagrees.
+  Action substrate is CSS selectors emitted by the LLM (different
+  from baseline's aids and plan-then-execute's text). Restoration is
+  best-effort: server-side mutations are not undone, HttpOnly cookies
+  out of scope. Live eval: **22/22 easy** (beats both prior novel
+  slots by 1), 1/10 hard (recoverable — exactly where the judge
+  shines). The 9 hard failures are substrate-bound (shadow/canvas/
+  iframe/popup/PDF), not loop-bound — documented in README.
 
 ## Distinctness (US-012, enforced)
 

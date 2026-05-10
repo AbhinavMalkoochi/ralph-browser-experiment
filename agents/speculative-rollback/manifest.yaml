@@ -1,0 +1,24 @@
+id: speculative-rollback
+language: typescript
+summary: |
+  Third novel agent (US-016). Every action is a SPECULATIVE TRIAL: each turn
+  the agent snapshots the page state (URL + local/sessionStorage), asks a
+  PROPOSER LLM for K candidate actions, executes the first, then asks a
+  separate JUDGE LLM whether the post-action state represents commit, revert,
+  or done. On revert the snapshot is restored and the next candidate is tried.
+  Distinct in core mechanism from prior slots: baseline-a11y-react never
+  rolls back, plan-then-execute commits the whole plan upfront, and
+  runtime-codegen has neither a judge nor a snapshot/restore step. The
+  separation of proposer and judge gives each call a single role and lets
+  the agent abandon a misstep without locking the state machine.
+approach_keywords:
+  - speculative_execution
+  - state_snapshot_restore
+  - progress_judging
+  - dual_llm_judge
+  - revert_on_regret
+  - branch_pruning
+distinct_from:
+  - baseline-a11y-react
+  - plan-then-execute
+  - runtime-codegen
