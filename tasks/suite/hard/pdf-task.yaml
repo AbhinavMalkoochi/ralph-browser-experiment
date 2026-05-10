@@ -1,0 +1,22 @@
+id: hard-pdf-task
+goal: |
+  The page links to a PDF report at /report.pdf. The PDF body contains a
+  single line of the form "Quarterly access code is XXXXXXXX" where the
+  code is regenerated each session. Open or download the PDF, extract the
+  access code, type it into the input, and click "Submit access code".
+
+  The submission posts {answer} to /__pdf/submit which compares the typed
+  code to the session's expected code and stores ok=true at /__pdf/last on
+  a match.
+start_url: "fixtures://pdf-task"
+difficulty: hard
+tags:
+  - hard
+  - fixtures
+  - pdf
+  - download
+  - extraction
+  - server_receipt
+verifier:
+  kind: js
+  expression: "fetch('/__pdf/last').then(r => r.json()).then(j => Boolean(j && j.ok === true && typeof j.answer === 'string' && j.answer.length > 0))"

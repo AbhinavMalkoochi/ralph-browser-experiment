@@ -58,6 +58,176 @@ test("fixtures server: each page returns 200 and the expected marker text", asyn
     const iframeTarget = await fetch(`${server.origin}/iframe-drag/target`);
     assert.equal(iframeTarget.status, 200);
     assert.match(await iframeTarget.text(), /data-id="slot-2"/);
+
+    const hydration = await fetch(`${server.origin}/late-hydration`);
+    assert.equal(hydration.status, 200);
+    const hydrationHtml = await hydration.text();
+    assert.match(hydrationHtml, /id="confirm"/);
+    assert.match(hydrationHtml, /HYDRATION_DELAY_MS/);
+
+    const multitab = await fetch(`${server.origin}/multi-tab`);
+    assert.equal(multitab.status, 200);
+    const multitabHtml = await multitab.text();
+    assert.match(multitabHtml, /id="open-report"/);
+    assert.match(multitabHtml, /id="code-input"/);
+    const reportTab = await fetch(`${server.origin}/multi-tab/report?token=tok-x`);
+    assert.equal(reportTab.status, 200);
+    assert.match(await reportTab.text(), /report-code/);
+
+    const recov = await fetch(`${server.origin}/recoverable`);
+    assert.equal(recov.status, 200);
+    const recovHtml = await recov.text();
+    assert.match(recovHtml, /id="submit-btn"/);
+    assert.match(recovHtml, /__recoverable\/submit/);
+
+    const pdfTask = await fetch(`${server.origin}/pdf-task`);
+    assert.equal(pdfTask.status, 200);
+    const pdfTaskHtml = await pdfTask.text();
+    assert.match(pdfTaskHtml, /id="report-link"/);
+    assert.match(pdfTaskHtml, /id="answer-input"/);
+
+    const pdf = await fetch(`${server.origin}/report.pdf`);
+    assert.equal(pdf.status, 200);
+    assert.equal(pdf.headers.get("content-type"), "application/pdf");
+    const pdfBytes = Buffer.from(await pdf.arrayBuffer());
+    assert.equal(pdfBytes.subarray(0, 5).toString("utf8"), "%PDF-");
+    // Check the trailer exists (basic structural sanity).
+    assert.match(pdfBytes.toString("utf8"), /%%EOF/);
+    // The PDF body should contain the access code marker.
+    assert.match(pdfBytes.toString("utf8"), /Quarterly access code is [A-Z2-9]{8}/);
+  } finally {
+    await server.close();
+  }
+});
+
+test("fixtures server: /__hydration round-trip", async () => {
+  const server = await startFixturesServer();
+  try {
+    const before = await (await fetch(`${server.origin}/__hydration/last`)).json();
+    assert.deepEqual(before, {});
+    const submit = await fetch(`${server.origin}/__hydration/submit`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clickedAt: 2000, hydratedAt: 1500, attempts: 0 }),
+    });
+    assert.equal(submit.status, 200);
+    const after = await (await fetch(`${server.origin}/__hydration/last`)).json();
+    assert.equal(after.clickedAt, 2000);
+    assert.equal(after.hydratedAt, 1500);
+    assert.equal(after.attempts, 0);
+    assert.match(String(after.receivedAt), /T.*Z$/);
+  } finally {
+    await server.close();
+  }
+});
+
+test("fixtures server: /__multitab round-trip; rejects mismatched code and unknown token", async () => {
+  const server = await startFixturesServer();
+  try {
+    // Token-scoped code generation: same token returns the same code.
+    const r1 = await (await fetch(`${server.origin}/__multitab/report?token=t1`)).json();
+    const r2 = await (await fetch(`${server.origin}/__multitab/report?token=t1`)).json();
+    assert.equal(r1.ok, true);
+    assert.equal(r1.code, r2.code);
+    const r3 = await (await fetch(`${server.origin}/__multitab/report?token=t2`)).json();
+    assert.notEqual(r1.code, r3.code);
+
+    // Wrong code stores a failed receipt + 400.
+    const wrong = await fetch(`${server.origin}/__multitab/submit`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "t1", code: "NOPE" }),
+    });
+    assert.equal(wrong.status, 400);
+    const wrongLast = await (await fetch(`${server.origin}/__multitab/last`)).json();
+    assert.equal(wrongLast.ok, false);
+
+    // Right code records ok:true.
+    const ok = await fetch(`${server.origin}/__multitab/submit`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "t1", code: r1.code }),
+    });
+    assert.equal(ok.status, 200);
+    const after = await (await fetch(`${server.origin}/__multitab/last`)).json();
+    assert.equal(after.ok, true);
+    assert.equal(after.code, r1.code);
+
+    // Unknown token rejected.
+    const unknown = await fetch(`${server.origin}/__multitab/submit`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "ghost", code: "x" }),
+    });
+    assert.equal(unknown.status, 400);
+  } finally {
+    await server.close();
+  }
+});
+
+test("fixtures server: /__recoverable returns 500 once then succeeds; reset clears the counter", async () => {
+  const server = await startFixturesServer();
+  try {
+    const first = await fetch(`${server.origin}/__recoverable/submit`, { method: "POST" });
+    assert.equal(first.status, 500);
+    const second = await fetch(`${server.origin}/__recoverable/submit`, { method: "POST" });
+    assert.equal(second.status, 200);
+    const last = await (await fetch(`${server.origin}/__recoverable/last`)).json();
+    assert.equal(last.ok, true);
+    assert.equal(last.attempts, 2);
+
+    // Reset rewinds the failure counter so the next session sees the same
+    // first-call-fails contract.
+    await fetch(`${server.origin}/__reset`, { method: "POST" });
+    const cleared = await (await fetch(`${server.origin}/__recoverable/last`)).json();
+    assert.deepEqual(cleared, {});
+    const afterReset = await fetch(`${server.origin}/__recoverable/submit`, { method: "POST" });
+    assert.equal(afterReset.status, 500);
+  } finally {
+    await server.close();
+  }
+});
+
+test("fixtures server: /report.pdf body matches /__pdf/submit expected answer; reset rotates the answer", async () => {
+  const server = await startFixturesServer();
+  try {
+    const pdf1 = Buffer.from(
+      await (await fetch(`${server.origin}/report.pdf`)).arrayBuffer(),
+    ).toString("utf8");
+    const m1 = pdf1.match(/Quarterly access code is ([A-Z2-9]{8})/);
+    assert.ok(m1, "PDF should contain the access code marker");
+    const code1 = m1![1] as string;
+
+    // Wrong answer rejected.
+    const wrong = await fetch(`${server.origin}/__pdf/submit`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ answer: "WRONGCODE" }),
+    });
+    assert.equal(wrong.status, 400);
+    const wrongLast = await (await fetch(`${server.origin}/__pdf/last`)).json();
+    assert.equal(wrongLast.ok, false);
+
+    // Right answer accepted.
+    const ok = await fetch(`${server.origin}/__pdf/submit`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ answer: code1 }),
+    });
+    assert.equal(ok.status, 200);
+    const last = await (await fetch(`${server.origin}/__pdf/last`)).json();
+    assert.equal(last.ok, true);
+    assert.equal(last.answer, code1);
+
+    // Reset rotates the answer so the previous code stops working.
+    await fetch(`${server.origin}/__reset`, { method: "POST" });
+    const pdf2 = Buffer.from(
+      await (await fetch(`${server.origin}/report.pdf`)).arrayBuffer(),
+    ).toString("utf8");
+    const m2 = pdf2.match(/Quarterly access code is ([A-Z2-9]{8})/);
+    assert.ok(m2);
+    // Tiny chance of collision (1 in 32^8 ≈ 1.1e12) — fine for a unit test.
+    assert.notEqual(m2![1], code1);
   } finally {
     await server.close();
   }
@@ -139,7 +309,13 @@ test("hard-slice yaml specs all load with valid programmatic verifiers", async (
     "modal-stack.yaml",
     "conditional-form.yaml",
     "iframe-drag.yaml",
+    "late-hydration.yaml",
+    "multi-tab.yaml",
+    "recoverable.yaml",
+    "pdf-task.yaml",
   ];
+  // AC #5 of US-008: the hard slice must be exactly 10 fixtures.
+  assert.equal(hardSpecs.length, 10);
   for (const file of hardSpecs) {
     const task = await loadTaskFile(join(root, "tasks/suite/hard", file));
     assert.equal(task.difficulty, "hard");

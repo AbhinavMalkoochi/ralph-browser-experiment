@@ -44,6 +44,46 @@ canonical state for the verifier to read. postMessage delivery is
 asynchronous, so cheats (and any agent) must poll for a few frames
 before asserting the parent has caught the message.
 
+### Multi-tab fixtures
+
+For popup fixtures (`window.open` to a sibling route), the popup runs
+its own JS context independent of the original CDP target — our
+`CdpBrowserSession` only attaches to the first target, so an agent (or
+cheat) cannot directly evaluate inside the popup. Two patterns work:
+
+- **Auto-postback**: have the popup's onload script post results back to
+  `window.opener` and then `window.close()` itself. The original page's
+  `message` listener stores the result on `window.__test`; the agent
+  just polls. The cheat in `fixtures_sanity.test.ts` for `multi-tab`
+  bypasses the popup entirely (it knows the per-token endpoint), but a
+  realistic agent only needs to click the button and wait.
+- **Token-scoped state**: derive a per-page-load token (e.g. random
+  string in `window.__test.token`), pass it on the popup URL, and
+  cross-check on submit. This guarantees that an agent that opened the
+  popup and one that hasn't are distinguishable server-side.
+
+### Binary responses (PDF etc.)
+
+`server.ts` exposes `sendPdf(res, Buffer)` for `application/pdf`
+responses. The PDF bytes themselves are constructed by
+`buildAnswerPdf(answer)` in `pages/pdf_task.ts`, which produces a
+~400-byte single-page PDF whose body contains a single text run. The
+cheat in `fixtures_sanity.test.ts` decodes the response as `latin1`
+and regex-extracts the answer — real agents must do the same (or
+render the PDF properly, which is harder). Per-session randomness for
+the answer (`randomAccessCode()` on `freshState()`) prevents memorisation
+across runs and means `/__reset` rotates the expected value.
+
+### Stateful failure modes (transient errors)
+
+For fixtures that test retry behaviour (e.g. `recoverable`), keep the
+"first call fails" counter on the server-side `FixtureState` and reset
+it via `freshState()` so `/__reset` between tasks restores the
+contract. The page's failure-recovery UI (banner + re-enabled submit)
+is what makes the retry path discoverable to a real agent; cheats poll
+on `window.__test.attempts` and the button's disabled state to know
+when to retry.
+
 ## Server lifecycle
 
 `startFixturesServer({port?})` returns `{origin, port, close, reset}`. The

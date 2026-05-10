@@ -1,0 +1,23 @@
+id: hard-late-hydration
+goal: |
+  The page renders an "Confirm order" button immediately, but for the first
+  ~1500ms the button has no real click handler — pre-hydration clicks bump
+  window.__test.attempts and surface a transient "Still loading…" message
+  but do NOT advance the workflow. After hydration completes the button's
+  real click handler is wired and a single click flips
+  window.__test.completed to true and posts to /__hydration/submit.
+
+  Wait for hydration (window.__test.hydrated === true), THEN click the
+  Confirm button so window.__test.completed becomes true and the click
+  arrives strictly after hydration.
+start_url: "fixtures://late-hydration"
+difficulty: hard
+tags:
+  - hard
+  - fixtures
+  - hydration
+  - timing
+  - spa
+verifier:
+  kind: js
+  expression: "Boolean(window.__test && window.__test.completed === true && window.__test.hydrated === true && Number(window.__test.clickedAt) >= Number(window.__test.hydratedAt))"

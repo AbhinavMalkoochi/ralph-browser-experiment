@@ -141,8 +141,8 @@
         "Tests pass"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added 4 final hostile fixtures; hard slice is now exactly 10. tasks/fixtures/pages/{late_hydration,multi_tab,recoverable,pdf_task}.ts + tasks/suite/hard/{late-hydration,multi-tab,recoverable,pdf-task}.yaml. late-hydration: Confirm button has no real handler for the first 1500ms; pre-hydration clicks bump window.__test.attempts and surface a 'Still loading…' banner but don't advance. Verifier requires window.__test.completed===true AND clickedAt>=hydratedAt. multi-tab: parent page generates a per-load token, the 'Open report' button calls window.open('/multi-tab/report?token=…'); popup fetches a per-token code from /__multitab/report and posts it back via window.opener.postMessage, then window.close()s. Submit cross-checks code against per-token expected value server-side. Cheat bypasses popup (fetches code directly using window.__test.token) — real agents need either popup support or this fast path. recoverable: POST /__recoverable/submit returns 500 on first attempt per session, 200 after; page surfaces banner + re-enables submit so an agent that retries succeeds. Verifier requires j.ok===true and attempts>=2. pdf-task: GET /report.pdf serves a minimal valid 5-object PDF (~400 bytes, opens in real PDF viewers) whose text run is 'Quarterly access code is XXXXXXXX'; access code regenerated on every /__reset via randomAccessCode(). Cheat fetches the PDF, latin1-decodes, regex-extracts the answer, submits. Trivial click-first-link FAILs all 10 hard fixtures (DECLINED on 9 of 10; DONE on pdf-task because it navigates to the PDF link but never submits). All 10 cheat agents PASS — satisfies AC #5 (>=8/10). 103 TS tests + 7 Python tests passing (12 new TS: 5 fixtures_server.test.ts cases + 8 fixtures_sanity.test.ts cases minus 1 net for the consolidation)."
     },
     {
       "id": "US-009",

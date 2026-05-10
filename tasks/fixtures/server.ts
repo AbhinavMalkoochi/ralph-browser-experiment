@@ -19,10 +19,32 @@
 //                            into the other. Source and target pages live at
 //                            /iframe-drag/source and /iframe-drag/target.
 //
-//   POST /__shadow/submit    Shadow-form receipt sink.
-//   GET  /__shadow/last      Latest shadow receipt ({} if none).
+//   GET  /late-hydration     US-008: SPA whose Confirm button has no real
+//                            click handler for the first 1500ms.
+//   GET  /multi-tab          US-008: Parent page that opens a popup at
+//                            /multi-tab/report; popup posts a per-token
+//                            access code back via opener.postMessage.
+//   GET  /recoverable        US-008: Submit endpoint returns 500 once per
+//                            session before succeeding on retry.
+//   GET  /pdf-task           US-008: Page that points at /report.pdf and
+//                            asks the agent to type the access code printed
+//                            inside the PDF.
+//   GET  /report.pdf         US-008: Minimal application/pdf containing
+//                            "Quarterly access code is <session token>".
+//
+//   POST /__shadow/submit       Shadow-form receipt sink.
+//   GET  /__shadow/last         Latest shadow receipt ({} if none).
 //   POST /__conditional/submit  Conditional-form receipt sink with cross-check.
 //   GET  /__conditional/last    Latest conditional receipt ({} if none).
+//   POST /__hydration/submit    Late-hydration click receipt.
+//   GET  /__hydration/last      Latest hydration receipt.
+//   GET  /__multitab/report     Popup queries this for its session code.
+//   POST /__multitab/submit     Parent page submits the typed code; cross-checked.
+//   GET  /__multitab/last       Latest multi-tab receipt.
+//   POST /__recoverable/submit  Returns 500 on first call per session, 200 after.
+//   GET  /__recoverable/last    Latest recoverable receipt.
+//   POST /__pdf/submit          Validates typed code against the PDF answer.
+//   GET  /__pdf/last            Latest PDF receipt.
 //   POST /__reset            Clears server-side state (used between tasks).
 //   GET  /__health           Returns "ok" for liveness probes.
 //
@@ -43,6 +65,10 @@ import {
   IFRAME_DRAG_SOURCE_HTML,
   IFRAME_DRAG_TARGET_HTML,
 } from "./pages/iframe_drag.js";
+import { LATE_HYDRATION_HTML } from "./pages/late_hydration.js";
+import { MULTI_TAB_PARENT_HTML, MULTI_TAB_REPORT_HTML } from "./pages/multi_tab.js";
+import { RECOVERABLE_HTML } from "./pages/recoverable.js";
+import { PDF_TASK_HTML, buildAnswerPdf, randomAccessCode } from "./pages/pdf_task.js";
 
 export interface FixturesServer {
   origin: string;
@@ -71,13 +97,65 @@ export interface ConditionalReceipt {
   receivedAt?: string;
 }
 
+export interface HydrationReceipt {
+  clickedAt?: number;
+  hydratedAt?: number;
+  attempts?: number;
+  receivedAt?: string;
+}
+
+export interface MultiTabReceipt {
+  ok?: boolean;
+  token?: string;
+  code?: string;
+  receivedAt?: string;
+}
+
+export interface RecoverableReceipt {
+  ok?: boolean;
+  attempts?: number;
+  receivedAt?: string;
+}
+
+export interface PdfReceipt {
+  ok?: boolean;
+  answer?: string;
+  receivedAt?: string;
+}
+
 interface FixtureState {
   lastShadowReceipt: ShadowReceipt;
   lastConditionalReceipt: ConditionalReceipt;
+  lastHydrationReceipt: HydrationReceipt;
+  // Per-token expected access code for the multi-tab fixture. The popup
+  // queries /__multitab/report?token=… and gets a token-scoped code; the
+  // parent posts the typed code to /__multitab/submit and we cross-check.
+  multitabCodes: Map<string, string>;
+  lastMultitabReceipt: MultiTabReceipt;
+  // Recoverable failure: the first POST per session returns 500, then we
+  // succeed. recoverableAttempts counts requests so the verifier can
+  // assert the agent retried at least once.
+  recoverableAttempts: number;
+  lastRecoverableReceipt: RecoverableReceipt;
+  // PDF answer (regenerated on every reset so cached PDFs across sessions
+  // don't leak). The HTML page does NOT see this directly — the answer is
+  // only inside the PDF body served at /report.pdf.
+  pdfAnswer: string;
+  lastPdfReceipt: PdfReceipt;
 }
 
 function freshState(): FixtureState {
-  return { lastShadowReceipt: {}, lastConditionalReceipt: {} };
+  return {
+    lastShadowReceipt: {},
+    lastConditionalReceipt: {},
+    lastHydrationReceipt: {},
+    multitabCodes: new Map(),
+    lastMultitabReceipt: {},
+    recoverableAttempts: 0,
+    lastRecoverableReceipt: {},
+    pdfAnswer: randomAccessCode(),
+    lastPdfReceipt: {},
+  };
 }
 
 export async function startFixturesServer(opts: { port?: number; host?: string } = {}): Promise<FixturesServer> {
@@ -140,6 +218,24 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, state: F
   if (method === "GET" && path === "/iframe-drag/target") {
     return sendHtml(res, IFRAME_DRAG_TARGET_HTML);
   }
+  if (method === "GET" && (path === "/late-hydration" || path === "/late-hydration/")) {
+    return sendHtml(res, LATE_HYDRATION_HTML);
+  }
+  if (method === "GET" && (path === "/multi-tab" || path === "/multi-tab/")) {
+    return sendHtml(res, MULTI_TAB_PARENT_HTML);
+  }
+  if (method === "GET" && path === "/multi-tab/report") {
+    return sendHtml(res, MULTI_TAB_REPORT_HTML);
+  }
+  if (method === "GET" && (path === "/recoverable" || path === "/recoverable/")) {
+    return sendHtml(res, RECOVERABLE_HTML);
+  }
+  if (method === "GET" && (path === "/pdf-task" || path === "/pdf-task/")) {
+    return sendHtml(res, PDF_TASK_HTML);
+  }
+  if (method === "GET" && path === "/report.pdf") {
+    return sendPdf(res, buildAnswerPdf(state.pdfAnswer));
+  }
 
   if (method === "POST" && path === "/__shadow/submit") {
     const body = await readBody(req);
@@ -187,6 +283,109 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, state: F
     return sendJson(res, 200, state.lastConditionalReceipt);
   }
 
+  if (method === "POST" && path === "/__hydration/submit") {
+    const body = await readBody(req);
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body || "{}");
+    } catch {
+      return sendJson(res, 400, { ok: false, error: "invalid json" });
+    }
+    state.lastHydrationReceipt = {
+      ...(typeof parsed.clickedAt === "number" ? { clickedAt: parsed.clickedAt } : {}),
+      ...(typeof parsed.hydratedAt === "number" ? { hydratedAt: parsed.hydratedAt } : {}),
+      ...(typeof parsed.attempts === "number" ? { attempts: parsed.attempts } : {}),
+      receivedAt: new Date().toISOString(),
+    };
+    return sendJson(res, 200, { ok: true });
+  }
+  if (method === "GET" && path === "/__hydration/last") {
+    return sendJson(res, 200, state.lastHydrationReceipt);
+  }
+
+  if (method === "GET" && path === "/__multitab/report") {
+    const u = new URL(url, "http://x");
+    const token = u.searchParams.get("token") ?? "";
+    if (!token) return sendJson(res, 400, { ok: false, error: "missing token" });
+    let code = state.multitabCodes.get(token);
+    if (!code) {
+      code = randomAccessCode();
+      state.multitabCodes.set(token, code);
+    }
+    return sendJson(res, 200, { ok: true, code });
+  }
+  if (method === "POST" && path === "/__multitab/submit") {
+    const body = await readBody(req);
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body || "{}");
+    } catch {
+      return sendJson(res, 400, { ok: false, error: "invalid json" });
+    }
+    const token = typeof parsed.token === "string" ? parsed.token : "";
+    const code = typeof parsed.code === "string" ? parsed.code : "";
+    const expected = state.multitabCodes.get(token);
+    if (!expected) return sendJson(res, 400, { ok: false, error: "unknown token" });
+    if (code !== expected) {
+      state.lastMultitabReceipt = {
+        ok: false,
+        token,
+        code,
+        receivedAt: new Date().toISOString(),
+      };
+      return sendJson(res, 400, { ok: false, error: "code mismatch" });
+    }
+    state.lastMultitabReceipt = {
+      ok: true,
+      token,
+      code,
+      receivedAt: new Date().toISOString(),
+    };
+    return sendJson(res, 200, { ok: true });
+  }
+  if (method === "GET" && path === "/__multitab/last") {
+    return sendJson(res, 200, state.lastMultitabReceipt);
+  }
+
+  if (method === "POST" && path === "/__recoverable/submit") {
+    state.recoverableAttempts++;
+    if (state.recoverableAttempts === 1) {
+      // Deliberate transient failure on first attempt only.
+      return sendJson(res, 500, { ok: false, error: "upstream temporarily unavailable" });
+    }
+    state.lastRecoverableReceipt = {
+      ok: true,
+      attempts: state.recoverableAttempts,
+      receivedAt: new Date().toISOString(),
+    };
+    return sendJson(res, 200, { ok: true, attempts: state.recoverableAttempts });
+  }
+  if (method === "GET" && path === "/__recoverable/last") {
+    return sendJson(res, 200, state.lastRecoverableReceipt);
+  }
+
+  if (method === "POST" && path === "/__pdf/submit") {
+    const body = await readBody(req);
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body || "{}");
+    } catch {
+      return sendJson(res, 400, { ok: false, error: "invalid json" });
+    }
+    const answer = typeof parsed.answer === "string" ? parsed.answer.trim() : "";
+    const matches = answer.length > 0 && answer === state.pdfAnswer;
+    state.lastPdfReceipt = {
+      ok: matches,
+      answer,
+      receivedAt: new Date().toISOString(),
+    };
+    if (!matches) return sendJson(res, 400, { ok: false, error: "wrong code" });
+    return sendJson(res, 200, { ok: true });
+  }
+  if (method === "GET" && path === "/__pdf/last") {
+    return sendJson(res, 200, state.lastPdfReceipt);
+  }
+
   if (method === "GET" && (path === "/" || path === "/index.html")) {
     return sendHtml(
       res,
@@ -199,6 +398,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, state: F
 <li><a href="/modal-stack">/modal-stack</a></li>
 <li><a href="/conditional-form">/conditional-form</a></li>
 <li><a href="/iframe-drag">/iframe-drag</a></li>
+<li><a href="/late-hydration">/late-hydration</a></li>
+<li><a href="/multi-tab">/multi-tab</a></li>
+<li><a href="/recoverable">/recoverable</a></li>
+<li><a href="/pdf-task">/pdf-task</a> (<a href="/report.pdf">report.pdf</a>)</li>
 </ul></body></html>`,
     );
   }
@@ -297,6 +500,15 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 
 function sendText(res: ServerResponse, status: number, body: string): void {
   res.writeHead(status, { "content-type": "text/plain" });
+  res.end(body);
+}
+
+function sendPdf(res: ServerResponse, body: Buffer): void {
+  res.writeHead(200, {
+    "content-type": "application/pdf",
+    "content-length": String(body.length),
+    "cache-control": "no-store",
+  });
   res.end(body);
 }
 

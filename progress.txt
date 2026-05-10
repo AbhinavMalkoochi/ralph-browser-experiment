@@ -149,6 +149,43 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   the server ack lands. For postMessage fixtures, poll the parent's
   state with `await new Promise(r=>setTimeout(r,30))` until the
   recorded entry appears.
+- US-008 binary responses: tasks/fixtures/server.ts gained `sendPdf(res,
+  Buffer)` for application/pdf responses. PDFs are constructed by
+  `buildAnswerPdf(answer)` in pages/pdf_task.ts — a hand-rolled minimal
+  5-object PDF (catalog + pages + page + contents + font). Stream
+  /Length is computed from `Buffer.byteLength(stream, 'utf8')` and the
+  xref table indexes `Buffer.byteLength` offsets accumulated as we
+  concat chunks. Real PDF viewers open it; cheats fetch the bytes and
+  latin1-decode + regex-extract.
+- US-008 multi-tab: window.open() popups run their own JS context that
+  CdpBrowserSession does NOT attach to. The clean pattern is "popup
+  auto-postback": on load the popup posts results to window.opener and
+  then window.close()s itself; the parent's message listener stores
+  the result on window.__test for any agent to read by polling. The
+  cheat for `multi-tab` bypasses the popup entirely (fetches the
+  per-token /__multitab/report code directly) — that's fine because
+  the cheat's job is to prove the verifier accepts a correct
+  submission, not to exercise popup mechanics.
+- US-008 recoverable failure: keep the per-session "first call fails"
+  counter on `FixtureState` so /__reset between tasks restores the
+  contract. The page's failure recovery UI (banner + re-enabled
+  button) is what makes the retry path discoverable. Cheats poll on
+  `window.__test.attempts === 1 && !btn.disabled` before clicking
+  submit a second time.
+- US-008 late hydration: trick agents that assume "DOM presence ⇒
+  click handler attached" by initially binding a no-op handler that
+  records `attempts` but doesn't advance the state machine. After
+  HYDRATION_DELAY_MS, removeEventListener the no-op and addEventListener
+  the real handler. Agents must wait for `window.__test.hydrated ===
+  true` before clicking. The verifier asserts both `completed` and
+  `clickedAt >= hydratedAt` so an agent that races (clicks before
+  hydration finishes) fails even if a later post-hydration click also
+  lands.
+- Object.assign(state, freshState()) cleanly resets stateful Maps
+  (e.g. multitabCodes) because freshState() returns a brand new Map
+  reference. Don't reach into the existing Map and clear() unless you
+  have a reason — the closure in createServer holds a reference to the
+  outer `state` object, not its individual fields.
 ---
 
 ## 2026-05-08 - US-001
@@ -763,4 +800,149 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     up loader regressions automatically; the `hardSpecs` array is
     the single source of truth for the slice and should be updated
     in lockstep with the directory.
+---
+
+## 2026-05-09 - US-008
+- Four final hostile fixtures land the hard slice at exactly 10:
+  late-hydration, multi-tab, recoverable, pdf-task. All four have
+  programmatic JS verifiers; trivial click-first-link FAILs all 10
+  hard fixtures and 10 hand-written cheats PASS them (satisfies
+  AC #5 of "reference solution >= 8/10").
+- tasks/fixtures/pages/late_hydration.ts: SPA whose Confirm button
+  initially binds a no-op handler (records attempts, surfaces
+  transient "Still loading…" notice). After 1500ms the handler is
+  swapped via removeEventListener+addEventListener for the real one
+  that flips window.__test.completed and POSTs /__hydration/submit.
+  Verifier: completed===true AND clickedAt>=hydratedAt. Tagged
+  hydration, timing, spa.
+- tasks/fixtures/pages/multi_tab.ts: parent + popup. Parent
+  generates a per-page-load token in window.__test.token. "Open
+  report" calls window.open('/multi-tab/report?token=…'); popup
+  fetches per-token code from /__multitab/report, posts it back via
+  window.opener.postMessage(...) after a 200ms delay, then
+  window.close()s. Parent's message listener stores
+  window.__test.report.{code, receivedAt}. Submit cross-checks the
+  typed code against per-token expected value server-side; receipt
+  at /__multitab/last has ok=true on match. Tagged multi_tab,
+  postmessage, server_receipt.
+- tasks/fixtures/pages/recoverable.ts: Submit button POSTs
+  /__recoverable/submit; first attempt per session returns 500 with
+  a JSON error, second succeeds. Page surfaces error banner +
+  re-enables button so retry path is discoverable. Verifier:
+  /__recoverable/last.ok===true AND attempts>=2. Tagged retry,
+  error_handling, server_receipt.
+- tasks/fixtures/pages/pdf_task.ts: page links to /report.pdf and
+  has an answer input. /report.pdf is a hand-rolled minimal valid
+  5-object PDF (catalog/pages/page/contents/font, ~400 bytes,
+  opens in real PDF viewers) whose body contains "Quarterly access
+  code is XXXXXXXX". Code regenerated on every /__reset via
+  randomAccessCode() (8 chars from an ambiguity-free A-Z+2-9 set).
+  Submit cross-checks against state.pdfAnswer. Tagged pdf,
+  download, extraction, server_receipt.
+- tasks/fixtures/server.ts: 5 new GET routes (/late-hydration,
+  /multi-tab, /multi-tab/report, /recoverable, /pdf-task,
+  /report.pdf), 8 new state endpoints (/__hydration/{submit,last},
+  /__multitab/{report,submit,last}, /__recoverable/{submit,last},
+  /__pdf/{submit,last}). Added sendPdf() helper for
+  application/pdf responses with content-length + no-store.
+  FixtureState gained lastHydrationReceipt, multitabCodes (Map
+  keyed by token), lastMultitabReceipt, recoverableAttempts (int),
+  lastRecoverableReceipt, pdfAnswer, lastPdfReceipt — all reset on
+  /__reset via Object.assign(state, freshState()).
+- YAML specs at tasks/suite/hard/{late-hydration, multi-tab,
+  recoverable, pdf-task}.yaml. All use fixtures:// scheme +
+  difficulty=hard + verifier.kind=js. None tagged irreversible —
+  late-hydration is timing-sensitive but completed once latched is
+  not destructive; the others are retry-friendly by design.
+- Tests:
+  - harness/ts/tests/fixtures_server.test.ts: extended page-marker
+    assertions to all 4 new HTML routes + the PDF wire format
+    (Content-Type application/pdf, %PDF- header, %%EOF trailer,
+    access-code marker line). 4 new round-trip tests:
+    /__hydration round-trip; /__multitab token-scoped code
+    generation + mismatch/unknown-token rejection; /__recoverable
+    500-then-200 + reset rotates the counter; /__pdf full
+    submit/verify + reset rotates the answer. hardSpecs array now
+    has 10 entries with assert.equal(hardSpecs.length, 10) as the
+    AC anchor.
+  - harness/ts/tests/fixtures_sanity.test.ts: 4 new fixture cases
+    using the existing trivial-fails / cheat-passes pattern. Cheats
+    are inline browser.evaluate closures: late-hydration polls for
+    window.__test.hydrated then clicks; multi-tab bypasses the
+    popup by reading window.__test.token + fetching the per-token
+    code directly (real agents need popup-or-direct equivalent);
+    recoverable double-clicks with a poll on attempts===1 + button
+    re-enabled between clicks; pdf-task fetches /report.pdf,
+    latin1-decodes, regex-extracts the code.
+- make eval AGENT=trivial SLICE=hard now reports total=10 passed=0
+  failed=10 (9 DECLINED, 1 DONE for pdf-task because it navigates
+  to the only <a href> on the page, /report.pdf, but doesn't
+  submit any answer).
+- Files changed/added:
+  - new: tasks/fixtures/pages/{late_hydration,multi_tab,recoverable,
+    pdf_task}.ts
+  - new: tasks/suite/hard/{late-hydration,multi-tab,recoverable,
+    pdf-task}.yaml
+  - tasks/fixtures/server.ts (4 new HTML routes + 1 binary route +
+    8 new state endpoints + sendPdf + extended FixtureState +
+    extended top-of-file route comment + index page links)
+  - harness/ts/tests/fixtures_server.test.ts (extended page check,
+    4 new round-trip tests, hardSpecs grown to 10 with length
+    invariant)
+  - harness/ts/tests/fixtures_sanity.test.ts (4 new fixture cases
+    with cheat closures)
+  - tasks/CLAUDE.md (multi-tab pattern, binary responses,
+    stateful failure modes)
+  - prd.json, progress.txt
+- Quality checks: `npm run typecheck` clean; `npm test` 103/103
+  passing (12 new — 4 fixtures_server + 8 fixtures_sanity = 4
+  trivial + 4 cheat); `uv run pytest -q` 7/7 unchanged.
+- **Learnings for future iterations:**
+  - PDFs do NOT need a heavy library. A 5-object PDF (catalog,
+    pages, page, contents, font) with a single Tj text run is ~400
+    bytes and works in real viewers. The hard parts are: byte
+    offsets must be byte-counted not char-counted (use
+    Buffer.byteLength), the binary marker on line 2 (%\xFF\xFE\xFD\xFC)
+    needs `Buffer.from(s, 'binary')` so Latin-1 bytes survive, and
+    the xref table padding is exactly 10 digits. The code lives
+    in pages/pdf_task.ts as buildAnswerPdf(answer) — reusable for
+    any future fixture that needs a tiny PDF.
+  - Programmatic .click() in Runtime.evaluate IS counted as a user
+    gesture in headless Chrome (DOM activation). For a real agent
+    that needs window.open() to succeed, the click must come from
+    JS — but our cheats avoid that path entirely by using the
+    server-side token endpoints. CdpBrowserSession only attaches
+    to the first target, so popups run their own JS context that
+    we cannot evaluate into. The clean pattern is "popup
+    auto-postback + opener.postMessage": no CDP target plumbing
+    needed for the parent flow.
+  - For per-session state that needs to rotate on /__reset (random
+    answers, retry counters, token-scoped codes), put the
+    rotation INSIDE freshState() so Object.assign(state,
+    freshState()) handles it uniformly. We deliberately use a new
+    Map() reference rather than calling .clear() on the old one;
+    no callers retain a reference to the old Map past
+    Object.assign.
+  - When a fixture has BOTH a "race / fail-then-retry" path and a
+    success path, encode the failure mode as a status flag on the
+    page (button.disabled, error-banner textContent) so cheats and
+    real agents can poll on it — don't rely on timing or fetch
+    return values directly. Recoverable's cheat polls attempts===1
+    AND !btn.disabled before retrying, which is robust against
+    fetch-resolution timing.
+  - The trivial agent's DONE-but-FAIL outcome on pdf-task (it
+    navigates to the only `<a href>` on the page, /report.pdf, and
+    declares DONE) is a useful regression test: terminal_state and
+    verifier verdict are independent. Tournament metrics MUST use
+    the verifier verdict, not the agent's self-report. A future
+    agent that prematurely declares DONE on this fixture should
+    score 0.
+  - Late-hydration's removeEventListener-then-addEventListener
+    handler swap is the cleanest way to model "the JS handler
+    arrived later" without fragile race conditions in the no-op
+    handler. Don't try to put the gating logic INSIDE the handler
+    (e.g. `if (!hydrated) return;`) — that lets agents accidentally
+    succeed on the first post-hydration click that is part of a
+    burst, which weakens the AC. Removing the handler entirely
+    means pre-hydration clicks are observably no-ops.
 ---

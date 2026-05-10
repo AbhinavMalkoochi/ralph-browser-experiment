@@ -1,0 +1,25 @@
+id: hard-multi-tab
+goal: |
+  The page asks you to acknowledge a quarterly report by typing the access
+  code printed in the report into the input on this page and clicking
+  "Submit code". Clicking "Open report" opens a popup window at
+  /multi-tab/report?token=<session>. The popup fetches a per-token code
+  from the server and posts it back to its opener via
+  window.opener.postMessage; the opener stores the code at
+  window.__test.report.code, then closes itself. Wait for the code to
+  arrive, type it into the input, and submit.
+
+  The submission posts {token, code} to /__multitab/submit which compares
+  the typed code to the per-token expected code and stores
+  /__multitab/last with ok=true on a match.
+start_url: "fixtures://multi-tab"
+difficulty: hard
+tags:
+  - hard
+  - fixtures
+  - multi_tab
+  - postmessage
+  - server_receipt
+verifier:
+  kind: js
+  expression: "fetch('/__multitab/last').then(r => r.json()).then(j => Boolean(j && j.ok === true && typeof j.code === 'string' && j.code.length > 0))"

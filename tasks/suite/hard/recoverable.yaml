@@ -1,0 +1,18 @@
+id: hard-recoverable
+goal: |
+  The page submits an order to /__recoverable/submit when "Submit order" is
+  clicked. The first POST per session deliberately returns HTTP 500 with a
+  visible error banner and re-enables the submit button. Click submit,
+  observe the failure, then retry — the second submission succeeds and
+  records ok=true at /__recoverable/last with attempts >= 2.
+start_url: "fixtures://recoverable"
+difficulty: hard
+tags:
+  - hard
+  - fixtures
+  - retry
+  - error_handling
+  - server_receipt
+verifier:
+  kind: js
+  expression: "fetch('/__recoverable/last').then(r => r.json()).then(j => Boolean(j && j.ok === true && Number(j.attempts) >= 2))"

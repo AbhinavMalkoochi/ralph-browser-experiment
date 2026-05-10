@@ -162,6 +162,137 @@ const FIXTURES: FixtureCase[] = [
     },
   },
   {
+    taskFile: "tasks/suite/hard/late-hydration.yaml",
+    taskKey: "late-hydration",
+    cheat: async (browser) => {
+      // Wait for window.__test.hydrated to flip true (after the SPA's
+      // 1500ms hydration delay), then click Confirm so the click lands
+      // strictly after hydration. The post-hydration handler fires the
+      // server POST and flips document.title='confirmed' once the
+      // /__hydration/submit fetch resolves.
+      await browser.evaluate(`(async () => {
+        await new Promise((resolve) => {
+          const start = Date.now();
+          const tick = () => {
+            if (window.__test && window.__test.hydrated) return resolve();
+            if (Date.now() - start > 5000) return resolve();
+            setTimeout(tick, 30);
+          };
+          tick();
+        });
+        document.getElementById('confirm').click();
+        await new Promise((resolve) => {
+          if (document.title === 'confirmed') return resolve();
+          const o = new MutationObserver(() => {
+            if (document.title === 'confirmed') { o.disconnect(); resolve(); }
+          });
+          o.observe(document.querySelector('title') || document.head, {
+            characterData: true, childList: true, subtree: true,
+          });
+          setTimeout(() => { o.disconnect(); resolve(); }, 2500);
+        });
+      })()`);
+    },
+  },
+  {
+    taskFile: "tasks/suite/hard/multi-tab.yaml",
+    taskKey: "multi-tab",
+    cheat: async (browser) => {
+      // The popup workflow is the canonical solution; for the cheat we
+      // bypass the popup and fetch the per-token code directly using the
+      // session's token stored on window.__test.token. This exercises the
+      // submit/verify path without needing CDP target attach for popups.
+      await browser.evaluate(`(async () => {
+        const token = window.__test.token;
+        const r = await fetch('/__multitab/report?token=' + encodeURIComponent(token));
+        const j = await r.json();
+        if (!j || !j.code) throw new Error('no code returned for token: ' + token);
+        document.getElementById('code-input').value = j.code;
+        document.getElementById('submit-btn').click();
+        await new Promise((resolve) => {
+          if (document.title === 'submitted') return resolve();
+          const o = new MutationObserver(() => {
+            if (document.title === 'submitted') { o.disconnect(); resolve(); }
+          });
+          o.observe(document.querySelector('title') || document.head, {
+            characterData: true, childList: true, subtree: true,
+          });
+          setTimeout(() => { o.disconnect(); resolve(); }, 2000);
+        });
+      })()`);
+    },
+  },
+  {
+    taskFile: "tasks/suite/hard/recoverable.yaml",
+    taskKey: "recoverable",
+    cheat: async (browser) => {
+      // First click hits /__recoverable/submit which returns 500; the
+      // page surfaces an error banner and re-enables the submit button.
+      // Wait for the button to become re-enabled (signal that the first
+      // attempt finished) and then click it again — second attempt
+      // succeeds with 200.
+      await browser.evaluate(`(async () => {
+        const btn = document.getElementById('submit-btn');
+        const waitFor = (cond, timeout) => new Promise((resolve) => {
+          const start = Date.now();
+          const tick = () => {
+            if (cond()) return resolve(true);
+            if (Date.now() - start > timeout) return resolve(false);
+            setTimeout(tick, 30);
+          };
+          tick();
+        });
+        btn.click();
+        // Wait for the first attempt to be recorded (attempts === 1)
+        // AND for the button to be re-enabled.
+        const failed = await waitFor(
+          () => window.__test.attempts === 1 && !btn.disabled,
+          3000,
+        );
+        if (!failed) throw new Error('first attempt did not surface as a failure');
+        btn.click();
+        await new Promise((resolve) => {
+          if (document.title === 'submitted') return resolve();
+          const o = new MutationObserver(() => {
+            if (document.title === 'submitted') { o.disconnect(); resolve(); }
+          });
+          o.observe(document.querySelector('title') || document.head, {
+            characterData: true, childList: true, subtree: true,
+          });
+          setTimeout(() => { o.disconnect(); resolve(); }, 2000);
+        });
+      })()`);
+    },
+  },
+  {
+    taskFile: "tasks/suite/hard/pdf-task.yaml",
+    taskKey: "pdf-task",
+    cheat: async (browser) => {
+      // Fetch the PDF as bytes, decode as latin1 (the PDF is ASCII text
+      // operators with no encoded streams), regex-extract the access
+      // code, then type it into the input and submit.
+      await browser.evaluate(`(async () => {
+        const r = await fetch('/report.pdf');
+        const buf = await r.arrayBuffer();
+        const text = new TextDecoder('latin1').decode(buf);
+        const m = text.match(/Quarterly access code is ([A-Z2-9]{8})/);
+        if (!m) throw new Error('no access code marker in PDF body');
+        document.getElementById('answer-input').value = m[1];
+        document.getElementById('submit-btn').click();
+        await new Promise((resolve) => {
+          if (document.title === 'submitted') return resolve();
+          const o = new MutationObserver(() => {
+            if (document.title === 'submitted') { o.disconnect(); resolve(); }
+          });
+          o.observe(document.querySelector('title') || document.head, {
+            characterData: true, childList: true, subtree: true,
+          });
+          setTimeout(() => { o.disconnect(); resolve(); }, 2000);
+        });
+      })()`);
+    },
+  },
+  {
     taskFile: "tasks/suite/hard/iframe-drag.yaml",
     taskKey: "iframe-drag",
     cheat: async (browser) => {
