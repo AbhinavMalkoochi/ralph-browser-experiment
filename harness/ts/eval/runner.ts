@@ -23,9 +23,18 @@ import {
   type FixturesServer,
 } from "../../../tasks/fixtures/server.js";
 
-/** Built-in agent id aliases — `trivial` resolves to the click-first-link reference. */
+/**
+ * Built-in agent id aliases.
+ * - `trivial`  → click-first-link  (US-002 reference / contract demo)
+ * - `baseline` → click-first-link  (placeholder until US-013 ships
+ *                                   `baseline-a11y-react`. The alias keeps
+ *                                   `make eval AGENT=baseline SLICE=easy`
+ *                                   working in the meantime — once US-013
+ *                                   lands, retarget this entry.)
+ */
 export const AGENT_ALIASES: Record<string, string> = {
   trivial: "click-first-link",
+  baseline: "click-first-link",
 };
 
 /** Per-difficulty default budgets. Mirrors US-010 AC #2; safe defaults for now. */
@@ -35,6 +44,20 @@ export const DIFFICULTY_BUDGETS: Record<string, BudgetLimits> = {
   hard: { tokens: 600_000, usd: 3.0, wallSeconds: 600, steps: 80 },
 };
 
+/**
+ * Per-slice retry defaults. The easy slice exercises live public sites that
+ * are subject to transient flakiness (DNS, TLS, transient 502s, captchas);
+ * AC #5 of US-009 requires up to 2 retries before recording a failure on
+ * easy. Other slices retry zero times by default.
+ */
+export const SLICE_RETRIES: Record<string, number> = {
+  easy: 2,
+};
+
+export function defaultRetriesForSlice(slice: string): number {
+  return SLICE_RETRIES[slice] ?? 0;
+}
+
 export interface EvalOptions {
   agent: string;
   slice: string;
@@ -42,6 +65,18 @@ export interface EvalOptions {
   runsRoot: string;
   /** Repo root (cwd by default). Used to resolve agents/ and tasks/ paths. */
   repoRoot?: string;
+  /**
+   * Override slice loading; when set, runEval uses these tasks directly and
+   * does NOT read tasks/suite/<slice>/. The `slice` value is still recorded
+   * on the summary for reporting.
+   */
+  tasks?: Task[];
+  /**
+   * Number of additional attempts on a failed cell before recording the
+   * failure (1 retry = 2 attempts total). Defaults to
+   * `defaultRetriesForSlice(slice)` when omitted.
+   */
+  retries?: number;
 }
 
 export interface EvalResult {
@@ -52,6 +87,8 @@ export interface EvalResult {
   score: number;
   reason: string;
   durationMs: number;
+  /** 1-based count of attempts that ran for this cell; >=1 always. */
+  attempts: number;
 }
 
 export interface EvalSummary {
@@ -99,20 +136,24 @@ export async function loadSliceTasks(slice: string, repoRoot: string): Promise<T
 
 export async function runEval(opts: EvalOptions): Promise<EvalSummary> {
   const repoRoot = opts.repoRoot ?? process.cwd();
-  const tasks = await loadSliceTasks(opts.slice, repoRoot);
+  const tasks = opts.tasks ?? (await loadSliceTasks(opts.slice, repoRoot));
   const needsFixtures = tasks.some((t) => t.start_url.startsWith("fixtures://"));
   let fixtures: FixturesServer | null = null;
   if (needsFixtures) fixtures = await startFixturesServer();
 
   const agent = await loadAgent(opts.agent, repoRoot);
+  const retries = opts.retries ?? defaultRetriesForSlice(opts.slice);
   const results: EvalResult[] = [];
   const t0 = Date.now();
   try {
     for (const task of tasks) {
       for (let seed = 0; seed < opts.seeds; seed++) {
-        if (fixtures) await fixtures.reset();
-        const startUrl = fixtures ? resolveFixtureUrl(task.start_url, fixtures.origin) : task.start_url;
-        results.push(await runOne(agent, task, seed, startUrl, opts.runsRoot));
+        const result = await runWithRetry(retries, async () => {
+          if (fixtures) await fixtures.reset();
+          const startUrl = fixtures ? resolveFixtureUrl(task.start_url, fixtures.origin) : task.start_url;
+          return runOne(agent, task, seed, startUrl, opts.runsRoot);
+        });
+        results.push(result);
       }
     }
   } finally {
@@ -129,6 +170,28 @@ export async function runEval(opts: EvalOptions): Promise<EvalSummary> {
     durationMs,
     results,
   };
+}
+
+/**
+ * Run `fn` up to `retries + 1` times; stop early on the first attempt that
+ * returns `pass: true`. The returned EvalResult has its `attempts` field set
+ * to the 1-based count of attempts that actually ran (so a first-attempt
+ * pass returns `attempts: 1`).
+ *
+ * `retries` MUST be >= 0; non-integer / negative values are clamped.
+ */
+export async function runWithRetry(
+  retries: number,
+  fn: (attempt: number) => Promise<EvalResult>,
+): Promise<EvalResult> {
+  const max = Math.max(0, Math.floor(retries));
+  let last: EvalResult | undefined;
+  for (let attempt = 0; attempt <= max; attempt++) {
+    const r = await fn(attempt);
+    last = { ...r, attempts: attempt + 1 };
+    if (last.pass) return last;
+  }
+  return last as EvalResult;
 }
 
 async function runOne(
@@ -182,6 +245,7 @@ async function runOne(
     score,
     reason,
     durationMs: Date.now() - t0,
+    attempts: 1,
   };
 }
 
@@ -191,8 +255,9 @@ export function formatSummary(summary: EvalSummary): string {
     `(${(summary.durationMs / 1000).toFixed(1)}s)`;
   const rows = summary.results.map((r) => {
     const verdict = r.pass ? "PASS" : "FAIL";
+    const attemptTag = r.attempts > 1 ? ` attempts=${r.attempts}` : "";
     return `  ${verdict.padEnd(4)} ${r.task_id.padEnd(28)} seed=${r.seed} ` +
-      `term=${(r.terminal_state ?? "?").padEnd(16)} score=${r.score.toFixed(2)} ` +
+      `term=${(r.terminal_state ?? "?").padEnd(16)} score=${r.score.toFixed(2)}${attemptTag} ` +
       `${r.reason}`;
   });
   return [header, ...rows].join("\n");

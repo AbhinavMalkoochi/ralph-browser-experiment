@@ -1,0 +1,13 @@
+id: easy-mdn-fetch
+goal: |
+  Open the MDN Web Docs reference for the fetch() global function.
+  Confirm the page documents that fetch returns a Promise.
+start_url: "https://developer.mozilla.org/en-US/docs/Web/API/Window/fetch"
+difficulty: easy
+tags:
+  - easy
+  - extract
+  - public
+verifier:
+  kind: js
+  expression: "(/promise/i.test(document.body.innerText) && /fetch/i.test(document.body.innerText))"

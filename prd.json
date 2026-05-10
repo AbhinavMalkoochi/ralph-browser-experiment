@@ -158,8 +158,8 @@
         "Tests pass"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented at tasks/suite/easy/*.yaml (22 task specs across 11 distinct hosts: example.com/.org/.net, www.iana.org, info.cern.ch, en.wikipedia.org, www.rfc-editor.org, arxiv.org, developer.mozilla.org, httpbin.org, github.com). Skill-tag distribution: navigate=7, extract=12, fill=1, search=2 (every skill bucket has >=1 entry). All verifiers are kind=js with regex-tolerant page-state checks (document.title / document.body.innerText / document.location); none require auth or destructive actions. AGENT_ALIASES gained `baseline → click-first-link` (placeholder until US-013 ships baseline-a11y-react; the comment in runner.ts flags this for retargeting). Added SLICE_RETRIES table + defaultRetriesForSlice(slice); easy=2 (3 attempts total), other slices=0. New runWithRetry(retries, fn) helper wraps the per-cell run+verify cycle and short-circuits on the first pass. EvalResult gained an `attempts` field; formatSummary surfaces `attempts=N` only when N>1. CLI accepts `--retries=N` to override the slice default. Tests: 19 new (10 easy_slice.test.ts asserting tasks≥20, single skill tag, ≤120-word goals, ≥10 distinct hosts, programmatic verifiers, https-only, etc.; 9 runner_retry.test.ts covering pass-on-first/second/third, never-passes, retries=0, negative/non-integer clamping, 0-indexed attempt arg, SLICE_RETRIES contents). 122 TS tests + 7 Python tests passing. Hard slice regression: `make eval AGENT=trivial SLICE=hard` still 10/10 fail."
     },
     {
       "id": "US-010",

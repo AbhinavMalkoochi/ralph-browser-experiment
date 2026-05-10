@@ -1,0 +1,14 @@
+id: easy-example-com
+goal: |
+  Open the canonical IANA-reserved domain at example.com and confirm it has
+  loaded. The page should advertise itself as the "Example Domain". No login
+  or destructive action is required; the agent only has to land on the page.
+start_url: "https://example.com/"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+verifier:
+  kind: js
+  expression: "(/example domain/i.test(document.title) || /example domain/i.test(document.body.innerText))"

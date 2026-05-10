@@ -1,0 +1,13 @@
+id: easy-wiki-tbl
+goal: |
+  Open the Wikipedia biography of Tim Berners-Lee. Confirm the page
+  references the World Wide Web (which he invented in 1989).
+start_url: "https://en.wikipedia.org/wiki/Tim_Berners-Lee"
+difficulty: easy
+tags:
+  - easy
+  - extract
+  - public
+verifier:
+  kind: js
+  expression: "/world wide web/i.test(document.body.innerText)"

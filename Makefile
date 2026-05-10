@@ -4,6 +4,9 @@
 AGENT ?= trivial
 SLICE ?= easy
 SEEDS ?= 1
+# RETRIES override for `make eval`. When unset the runner uses the
+# per-slice default from SLICE_RETRIES (easy=2, others=0).
+RETRIES ?=
 
 # Boot the hostile-fixtures server in the foreground (Ctrl-C to stop). Useful
 # for poking at /shadow-form, /canvas-drag, /virtual-scroll without an agent.
@@ -32,8 +35,8 @@ test-py:
 	uv run --quiet pytest -q
 
 eval:
-	@echo "==> make eval AGENT=$(AGENT) SLICE=$(SLICE) SEEDS=$(SEEDS)"
-	npx tsx harness/ts/cli/eval.ts --agent=$(AGENT) --slice=$(SLICE) --seeds=$(SEEDS)
+	@echo "==> make eval AGENT=$(AGENT) SLICE=$(SLICE) SEEDS=$(SEEDS)$(if $(RETRIES), RETRIES=$(RETRIES))"
+	npx tsx harness/ts/cli/eval.ts --agent=$(AGENT) --slice=$(SLICE) --seeds=$(SEEDS) $(if $(RETRIES),--retries=$(RETRIES))
 
 tournament:
 	@echo "==> make tournament SLICE=$(SLICE) SEEDS=$(SEEDS)"

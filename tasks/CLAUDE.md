@@ -97,6 +97,48 @@ in `finally`. Tests follow the same pattern (see
 ## Eval runner integration
 
 `harness/ts/eval/runner.ts` loads agents from `agents/<id>/agent.ts` via
-`loadAgent`, with `AGENT_ALIASES` for short names (`trivial → click-first-link`).
-Per-difficulty `Budget` limits live in `DIFFICULTY_BUDGETS` and mirror
-US-010's spec; update both together when budgets are tuned.
+`loadAgent`, with `AGENT_ALIASES` for short names (`trivial → click-first-link`,
+`baseline → click-first-link` until US-013 ships the real
+`baseline-a11y-react`). Per-difficulty `Budget` limits live in
+`DIFFICULTY_BUDGETS` and mirror US-010's spec; update both together when
+budgets are tuned.
+
+Per-slice retry defaults live in `SLICE_RETRIES` and are looked up via
+`defaultRetriesForSlice(slice)`. Easy is `2` (so a flaky cell gets up to 3
+total attempts before being recorded as failed); other slices retry zero
+times. Override at the CLI with `--retries=N`. The retry happens around the
+whole cell, including `fixtures.reset()` — so server-side state IS reset
+between attempts, which is the intended behaviour for live-site flakiness.
+
+## Easy slice (`tasks/suite/easy/`, US-009)
+
+The easy slice is ~20 tasks across 10+ public sites; it's the cheap "is the
+agent wired up correctly?" smoke. Author conventions:
+
+- `id: easy-<slug>` (every easy task id starts with `easy-`).
+- `difficulty: easy`.
+- Goal text: <= 120 words. Keep it tight; ideally <= 60 words.
+- Tags MUST include `easy` plus exactly ONE of
+  `{search, navigate, extract, fill}`. Add as many descriptive tags
+  (`public`, `wikipedia`, etc.) as you like, but the validator
+  (`easy_slice.test.ts`) asserts exactly one skill tag.
+- `start_url` MUST be `http://` or `https://` (no `fixtures://` —
+  fixtures are for hard).
+- `verifier.kind` MUST be `js` or `trajectory_predicate`. No `llm_judge`
+  in easy (the slice is meant to be cheap; LLM-judge tasks belong in
+  medium / hard).
+- The verifier expression should NOT depend on auth, paywalls, or
+  destructive actions. Public-read endpoints only.
+- Cross-origin verifiers cannot `fetch('/__some_path')` because the page
+  origin is the live site, not our fixtures server. Use
+  `document.title`, `document.body.innerText`, or `document.location` —
+  match against a regex tolerant of minor copy edits (`/i`, allow
+  optional whitespace, prefer multi-keyword `&&` over a single brittle
+  string).
+- Stay achievable in <= 5 steps for an honest baseline agent. The agent
+  should reasonably be able to: navigate, optionally click one link,
+  optionally read a fact, optionally submit one form.
+
+The validator at `harness/ts/tests/easy_slice.test.ts` enforces all of the
+above; adding a new easy task usually means dropping a YAML in this
+directory — the test picks it up automatically.

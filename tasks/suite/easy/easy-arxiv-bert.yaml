@@ -1,0 +1,13 @@
+id: easy-arxiv-bert
+goal: |
+  Open the arXiv abstract page for paper 1810.04805 (the BERT paper).
+  Confirm the abstract names BERT in the title or abstract.
+start_url: "https://arxiv.org/abs/1810.04805"
+difficulty: easy
+tags:
+  - easy
+  - extract
+  - public
+verifier:
+  kind: js
+  expression: "/\\bBERT\\b/.test(document.body.innerText)"

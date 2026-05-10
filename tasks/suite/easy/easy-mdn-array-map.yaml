@@ -1,0 +1,13 @@
+id: easy-mdn-array-map
+goal: |
+  Open the MDN Web Docs reference for Array.prototype.map. Confirm the
+  page documents the callback function the method takes.
+start_url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map"
+difficulty: easy
+tags:
+  - easy
+  - extract
+  - public
+verifier:
+  kind: js
+  expression: "(/callback/i.test(document.body.innerText) && /array/i.test(document.body.innerText))"

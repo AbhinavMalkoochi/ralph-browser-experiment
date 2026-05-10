@@ -8,13 +8,14 @@
 
 import { resolve } from "node:path";
 
-import { runEval, formatSummary } from "../eval/runner.js";
+import { runEval, formatSummary, defaultRetriesForSlice } from "../eval/runner.js";
 
 interface CliArgs {
   agent: string;
   slice: string;
   seeds: number;
   runsRoot: string;
+  retries: number | undefined;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -23,6 +24,7 @@ function parseArgs(argv: string[]): CliArgs {
     slice: "easy",
     seeds: 1,
     runsRoot: resolve(process.cwd(), "runs"),
+    retries: undefined,
   };
   for (const arg of argv) {
     const m = arg.match(/^--([^=]+)=(.*)$/);
@@ -34,6 +36,9 @@ function parseArgs(argv: string[]): CliArgs {
     else if (key === "seeds") {
       const n = Number.parseInt(value, 10);
       if (Number.isFinite(n) && n > 0) out.seeds = n;
+    } else if (key === "retries") {
+      const n = Number.parseInt(value, 10);
+      if (Number.isFinite(n) && n >= 0) out.retries = n;
     } else if (key === "runs-root") out.runsRoot = resolve(value);
   }
   return out;
@@ -41,7 +46,14 @@ function parseArgs(argv: string[]): CliArgs {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const summary = await runEval(args);
+  const retries = args.retries ?? defaultRetriesForSlice(args.slice);
+  const summary = await runEval({
+    agent: args.agent,
+    slice: args.slice,
+    seeds: args.seeds,
+    runsRoot: args.runsRoot,
+    retries,
+  });
   process.stdout.write(formatSummary(summary) + "\n");
 }
 

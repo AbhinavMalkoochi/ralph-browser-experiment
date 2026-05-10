@@ -1,0 +1,15 @@
+id: easy-httpbin-form
+goal: |
+  Open httpbin.org/forms/post (an HTML pizza-order form) and submit it
+  with customer name "alice", phone "5551234", and email
+  "alice@example.com". After submit, httpbin echoes the form data on
+  the response page.
+start_url: "https://httpbin.org/forms/post"
+difficulty: easy
+tags:
+  - easy
+  - fill
+  - public
+verifier:
+  kind: js
+  expression: "(document.location && /\\/post(\\?|$)/.test(document.location.pathname) && /alice@example\\.com/i.test(document.body.innerText))"

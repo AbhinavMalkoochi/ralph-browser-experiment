@@ -186,6 +186,32 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   reference. Don't reach into the existing Map and clear() unless you
   have a reason — the closure in createServer holds a reference to the
   outer `state` object, not its individual fields.
+- Easy slice (US-009) at tasks/suite/easy/*.yaml. ~22 tasks across 11
+  public hosts; every task is `difficulty: easy`, has exactly one of
+  the skill tags {search, navigate, extract, fill} alongside `easy`,
+  has goal<=120 words, uses a programmatic JS verifier, and starts at
+  an http(s) URL (no fixtures://, no auth). The validator at
+  harness/ts/tests/easy_slice.test.ts asserts all of these — adding a
+  new easy task is just dropping a YAML in the directory. Cross-origin
+  verifiers cannot fetch('/__path') (page origin is the live site),
+  so easy verifiers exclusively use document.title / .body.innerText
+  / .location with regex-tolerant matchers (/i, multi-keyword &&).
+- AGENT_ALIASES gained `baseline → click-first-link` as a placeholder
+  until US-013 ships agents/baseline-a11y-react. The runner.ts comment
+  flags this for retargeting; do not remove the alias when US-013
+  lands, just point it at the new id.
+- runWithRetry(retries, fn) at harness/ts/eval/runner.ts wraps a
+  cell's run+verify in up to retries+1 attempts and short-circuits on
+  the first pass. Used by runEval per (task, seed). The retry happens
+  AROUND the whole cell, INCLUDING fixtures.reset() — so server-side
+  state is reset between attempts, which is the intended behaviour for
+  live-site flakiness. EvalResult.attempts is 1-based; formatSummary
+  surfaces `attempts=N` only when N>1.
+- SLICE_RETRIES + defaultRetriesForSlice(slice) is the source of truth
+  for per-slice retry defaults. Easy=2 (US-009 AC #5: 2 retries before
+  recording a failure). Other slices default to 0; CLI override is
+  `--retries=N`. When US-010's tournament runner lands, reuse this
+  table — do not re-derive retries from slice in tournament code.
 ---
 
 ## 2026-05-08 - US-001
@@ -945,4 +971,133 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     succeed on the first post-hydration click that is part of a
     burst, which weakens the AC. Removing the handler entirely
     means pre-hydration clicks are observably no-ops.
+---
+
+## 2026-05-09 - US-009
+- Easy slice. 22 task YAMLs at tasks/suite/easy/ across 11 distinct
+  hosts (example.com/.org/.net, www.iana.org, info.cern.ch,
+  en.wikipedia.org, www.rfc-editor.org, arxiv.org,
+  developer.mozilla.org, httpbin.org, github.com). Skill-tag
+  distribution: navigate=7, extract=12, fill=1, search=2 (every
+  skill bucket has >=1 entry). Goal text is <=120 words on every
+  task; validator enforces this.
+- AGENT_ALIASES gained `baseline → click-first-link` so
+  `make eval AGENT=baseline SLICE=easy` works today; comment flags
+  the alias for retargeting once US-013 ships baseline-a11y-react.
+- New runWithRetry(retries, fn) helper at harness/ts/eval/runner.ts
+  wraps each cell's run+verify in up to retries+1 attempts and
+  short-circuits on the first pass. EvalResult gained an
+  `attempts` field; formatSummary surfaces `attempts=N` only when
+  N>1. The retry happens AROUND the whole cell, including
+  fixtures.reset(), so transient live-site flakiness (DNS, TLS
+  hiccup, transient 502, rate-limit interstitial) gets up to 3
+  total attempts on easy.
+- SLICE_RETRIES table + defaultRetriesForSlice(slice) is the
+  source of truth: easy=2, other slices=0 by default. CLI accepts
+  `--retries=N` to override.
+- runEval gained an `opts.tasks?: Task[]` injection point. When
+  set, runEval skips loadSliceTasks and uses the provided task
+  list (still records `slice` on the summary). US-010's tournament
+  runner can reuse this for resumable replays.
+- Verifier constraints for easy: regex-tolerant
+  document.title / document.body.innerText / document.location
+  matches with /i, escaped or character-class hyphens for
+  Wikipedia titles, and multi-keyword && to reduce false positives.
+  Cross-origin fetch('/__path') doesn't work (page origin is the
+  live site, not our fixtures server), so all server-side state
+  checks are off the table for easy.
+- Tests:
+  - harness/ts/tests/easy_slice.test.ts (10 tests):
+    >=20 tasks loaded, every task is difficulty=easy, every task
+    has exactly one skill tag {search, navigate, extract, fill},
+    every task tagged 'easy' alongside the skill, every goal
+    <=120 words, every id is unique and starts with 'easy-',
+    every start_url is public http(s) (no fixtures://), every
+    verifier is js or trajectory_predicate (no llm_judge in
+    easy), >=10 distinct hostnames, all 4 skill tags appear at
+    least once.
+  - harness/ts/tests/runner_retry.test.ts (9 tests): pass on
+    first/second/third try, never-passes (3 calls + last-fail
+    returned), retries=0, negative retries clamp to 0, non-integer
+    floored, 0-indexed attempt arg, SLICE_RETRIES.easy === 2 +
+    defaultRetriesForSlice for easy/hard/medium/unknown.
+- CLI updated at harness/ts/cli/eval.ts to parse `--retries=N`
+  (overrides slice default) and pass it through to runEval. The
+  CLI default still flows through defaultRetriesForSlice(slice).
+- tasks/CLAUDE.md gained an "Easy slice" section documenting the
+  authoring conventions and a note on the retry semantics in the
+  Eval-runner-integration section.
+- Files changed/added:
+  - new: tasks/suite/easy/{easy-arxiv-attention,easy-arxiv-bert,
+    easy-example-com,easy-example-net,easy-example-org,
+    easy-github-linux,easy-httpbin-form,easy-httpbin-headers,
+    easy-httpbin-html,easy-iana-home,easy-info-cern,
+    easy-mdn-array-map,easy-mdn-fetch,easy-rfc-2616,easy-rfc-791,
+    easy-wiki-html,easy-wiki-linux,easy-wiki-python,
+    easy-wiki-search-curl,easy-wiki-search-markdown,
+    easy-wiki-tbl,easy-wiki-tcp}.yaml (22 files)
+  - new: harness/ts/tests/{easy_slice,runner_retry}.test.ts
+  - harness/ts/eval/runner.ts (baseline alias, SLICE_RETRIES,
+    defaultRetriesForSlice, runWithRetry, EvalOptions.tasks +
+    .retries, EvalResult.attempts, runEval retry loop,
+    formatSummary attempts=N tag)
+  - harness/ts/cli/eval.ts (--retries flag)
+  - tasks/CLAUDE.md (easy slice authoring conventions, retry
+    semantics)
+  - prd.json, progress.txt
+- Quality checks: `npm run typecheck` clean; `npm test` 122/122
+  passing (19 new — 10 easy_slice + 9 runner_retry); `uv run
+  pytest -q` 7/7 unchanged. Smoke check verified: `loadSliceTasks
+  ('easy')` returns 22 tasks; AGENT_ALIASES.baseline === 'click-
+  first-link'; defaultRetriesForSlice('easy') === 2. Hard slice
+  regression: `make eval AGENT=trivial SLICE=hard` still 10/10
+  fail (DECLINED on 9 fixtures, DONE-but-FAIL on pdf-task).
+- **Learnings for future iterations:**
+  - The easy slice has no fixtures server, no auth tokens, and
+    cross-origin restrictions mean verifiers cannot reach into
+    /__paths. So every easy verifier is necessarily a page-state
+    check — write the regex tolerant of minor copy edits (/i,
+    optional whitespace, multi-keyword &&). Wikipedia article
+    bodies in particular have lots of brackets, colons, and
+    whitespace variants; do not anchor to a single brittle
+    string.
+  - The "click first link" trivial agent navigates AWAY from the
+    start_url on every easy task with at least one anchor. So
+    the trivial agent is expected to FAIL almost every easy task,
+    not because the verifier is wrong but because the agent
+    navigated to a different page. This is the AC-correct
+    behaviour for the placeholder baseline; the real baseline
+    (US-013) will pass >=15/20.
+  - For the `fill` slot we use httpbin.org/forms/post (the only
+    no-auth, idempotent, echo-back form on the public web that I
+    know of). Verifier checks document.location.pathname ===
+    '/post' AND innerText contains the submitted email. The
+    trivial agent fails this because it has no fill mechanism.
+  - For `search` we use Wikipedia's Special:Search with
+    `fulltext=1` so the URL forces the results-list page rather
+    than auto-redirecting to a single article. The verifier just
+    checks for the search keyword in the body, so either a
+    results page or a redirected article passes — both are
+    valid "search succeeded" outcomes.
+  - runEval's retry happens AROUND the whole cell, including
+    `fixtures.reset()`. This was deliberate: the retry semantics
+    for live sites and for fixtures are the same — "reset state,
+    try again". Don't move the reset out of the retry; if a
+    fixture-driven retry test ever lands, it'll need a fresh
+    state per attempt.
+  - The opts.tasks injection point on runEval lets tests
+    construct a task spec inline rather than dropping a YAML in
+    a slice directory. Useful for: testing the runner against
+    synthetic tasks, replaying a tournament cell against a
+    different agent, debugging a single failing task.
+  - US-010's tournament runner should reuse SLICE_RETRIES and
+    defaultRetriesForSlice rather than reinventing per-slice
+    retry policy. Add a tournament-only override (e.g.
+    `--retries=0` for deterministic ablation runs) but keep the
+    same source of truth.
+  - The CLI parses `--retries=0` as "explicitly disable retries"
+    (Number.isFinite(0) && 0 >= 0). It only treats `--retries`
+    as unset when the flag is absent. So `make eval RETRIES=0
+    AGENT=baseline SLICE=easy` correctly disables retries on the
+    easy slice.
 ---

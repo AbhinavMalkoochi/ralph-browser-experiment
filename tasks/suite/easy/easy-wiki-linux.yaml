@@ -1,0 +1,13 @@
+id: easy-wiki-linux
+goal: |
+  Open the Wikipedia article on the Linux kernel and confirm the article
+  identifies the original author. No login is required.
+start_url: "https://en.wikipedia.org/wiki/Linux_kernel"
+difficulty: easy
+tags:
+  - easy
+  - extract
+  - public
+verifier:
+  kind: js
+  expression: "/linus torvalds/i.test(document.body.innerText)"

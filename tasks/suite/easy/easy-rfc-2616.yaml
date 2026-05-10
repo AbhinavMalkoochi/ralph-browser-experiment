@@ -1,0 +1,13 @@
+id: easy-rfc-2616
+goal: |
+  Open RFC 2616 on the IETF RFC archive. Confirm the document is the
+  HTTP/1.1 specification by checking for the canonical title text.
+start_url: "https://www.rfc-editor.org/rfc/rfc2616.html"
+difficulty: easy
+tags:
+  - easy
+  - extract
+  - public
+verifier:
+  kind: js
+  expression: "/hypertext transfer protocol/i.test(document.body.innerText)"

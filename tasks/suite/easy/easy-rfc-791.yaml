@@ -1,0 +1,13 @@
+id: easy-rfc-791
+goal: |
+  Open RFC 791 on the IETF RFC archive. Confirm the document is the
+  Internet Protocol specification by checking for the canonical title text.
+start_url: "https://www.rfc-editor.org/rfc/rfc791.html"
+difficulty: easy
+tags:
+  - easy
+  - extract
+  - public
+verifier:
+  kind: js
+  expression: "/internet protocol/i.test(document.body.innerText)"

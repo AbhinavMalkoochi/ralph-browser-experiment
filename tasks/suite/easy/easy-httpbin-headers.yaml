@@ -1,0 +1,13 @@
+id: easy-httpbin-headers
+goal: |
+  Open httpbin.org/headers, which echoes the request headers as JSON.
+  Confirm the page contains the User-Agent the browser sent.
+start_url: "https://httpbin.org/headers"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+verifier:
+  kind: js
+  expression: "/user-?agent/i.test(document.body.innerText)"

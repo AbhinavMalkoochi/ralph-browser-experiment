@@ -1,0 +1,13 @@
+id: easy-github-linux
+goal: |
+  Open the public GitHub repository torvalds/linux. Confirm the
+  repository page identifies it as the Linux kernel source.
+start_url: "https://github.com/torvalds/linux"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+verifier:
+  kind: js
+  expression: "(/linux kernel/i.test(document.body.innerText) || /torvalds\\s*\\/\\s*linux/i.test(document.body.innerText))"

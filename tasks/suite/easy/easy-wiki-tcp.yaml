@@ -1,0 +1,13 @@
+id: easy-wiki-tcp
+goal: |
+  Open the Wikipedia article on the Transmission Control Protocol (TCP).
+  Confirm the article references RFC 793 (the canonical TCP specification).
+start_url: "https://en.wikipedia.org/wiki/Transmission_Control_Protocol"
+difficulty: easy
+tags:
+  - easy
+  - extract
+  - public
+verifier:
+  kind: js
+  expression: "/rfc[\\s\\u00a0\\-]?793/i.test(document.body.innerText)"

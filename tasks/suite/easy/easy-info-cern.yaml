@@ -1,0 +1,14 @@
+id: easy-info-cern
+goal: |
+  Visit info.cern.ch — the page commemorating the world's first website.
+  The agent only has to land on the page; no login or destructive action
+  is required.
+start_url: "http://info.cern.ch/"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+verifier:
+  kind: js
+  expression: "(/world wide web/i.test(document.body.innerText) || /first website/i.test(document.body.innerText))"

@@ -1,0 +1,14 @@
+id: easy-iana-home
+goal: |
+  Visit the IANA homepage at iana.org. The agent should land on a page that
+  identifies itself as the Internet Assigned Numbers Authority. No login
+  is required.
+start_url: "https://www.iana.org/"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+verifier:
+  kind: js
+  expression: "(/internet assigned numbers authority/i.test(document.body.innerText) || /\\bIANA\\b/.test(document.body.innerText))"
