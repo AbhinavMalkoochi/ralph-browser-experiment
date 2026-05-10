@@ -248,13 +248,49 @@ that wants to self-verify mid-run can append additional verification lines.
 On `finish()`, if no explicit `verifier_verdict` is given but verifications
 were recorded, the most-recent verification is folded into `metadata`.
 
-## Running a tournament
+## Running a tournament (US-010)
 
-`make tournament` loads every agent under `agents/` and every task under
-`tasks/suite/<slice>/`, runs each `(agent, task, seed)` cell with its budget,
-and writes `runs/leaderboard.json`. The runner is resumable — completed cells
-are not re-executed on restart. `make report` regenerates
-`docs/leaderboard.md` from the JSON.
+`make tournament` (`harness/ts/cli/tournament.ts` →
+`harness/ts/tournament/runner.ts`) auto-discovers every agent under `agents/`
+via `manifest.yaml`, loads every task under `tasks/suite/<slice>/`, and runs
+each `(agent, task, seed)` cell with its per-difficulty budget.
+
+```bash
+make tournament SLICE=hard SEEDS=3                    # 3 seeds, no bracket
+make tournament SLICE=easy SEEDS=1 BRACKET=on         # single-elimination
+```
+
+CLI options on `harness/ts/cli/tournament.ts`:
+
+- `--slice=easy,hard` (csv) or `--slice=easy` — which slice(s) to run
+- `--seeds=N` — seeds per (agent, task)
+- `--agents=a,b,c` — only run these agent ids
+- `--tasks=t1,t2`  — only run these task ids
+- `--bracket=on|off` — compute single-elimination bracket per slice
+- `--retries=N` — override per-slice retry default
+- `--runs-root=<path>` — defaults to `<cwd>/runs`
+
+**Resumable**: each completed cell drops a `summary.json` next to
+`trajectory.jsonl.gz`. The next invocation skips any cell whose `summary.json`
+already exists and reuses the cached metrics. `rm runs/<agent>/<task>/<seed>/summary.json`
+to force a single cell to re-run.
+
+**Per-task budgets** (`DIFFICULTY_BUDGETS` in `harness/ts/eval/runner.ts`):
+easy=(50k tok, $0.20, 60s, 15 steps), medium=(200k, $1.00, 240s, 40 steps),
+hard=(600k, $3.00, 600s, 80 steps). The `Budget` instance enforces all axes;
+overrun maps to `terminal_state="BUDGET_EXCEEDED"`.
+
+**Leaderboard** lands at `runs/leaderboard.json` with one row per agent per
+slice (sorted by champion-tiebreaker rules: success_pct desc, mean_cost_usd
+asc, p95_latency_ms asc). Each row carries
+`{success_pct, mean_steps, mean_cost_usd, p50_latency_ms, p95_latency_ms,
+recovery_count, decline_count}`. `make report` (US-011) regenerates
+`docs/leaderboard.md` from this JSON.
+
+**Bracket**: with `--bracket=on`, the runner builds a single-elimination
+bracket per slice using snake seeding (1v4, 2v3 in round 1) and the same
+tiebreaker rules as the leaderboard sort. The bracket appears in the JSON
+under `slices.<slice>.bracket = {rounds, winner}`.
 
 ## Status
 

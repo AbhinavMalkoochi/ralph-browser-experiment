@@ -176,8 +176,8 @@
         "Tests pass"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented at harness/ts/tournament/{types,discovery,summary,leaderboard,bracket,runner,index}.ts and harness/ts/cli/tournament.ts. discoverAgents() scans agents/<id>/ for manifest.yaml + agent.{ts,py}, validates the manifest (id/language/summary required), and skips invalid entries with a warning instead of aborting. Per-cell done-marker is `runs/<agent>/<task>/<seed>/summary.json` — the runner reads it back into the leaderboard without ever gunzipping the trajectory; absence triggers a fresh run. summary.json carries {agent_id, task_id, seed, difficulty, terminal_state, pass, score, reason, decline_reason, steps, llm_calls, cost_usd, tokens_in, tokens_out, latency_ms, attempts, completed_at}. Per-task budgets reuse DIFFICULTY_BUDGETS from harness/ts/eval/runner.ts (easy/medium/hard tiers from AC #2). aggregate() builds per-agent rows with the documented metrics; sort order matches the champion tiebreaker (success_pct desc, mean_cost_usd asc, p95_latency_ms asc). buildBracket() does snake-seeded single-elimination and is opt-in via `--bracket=on`; the result lands at slices.<slice>.bracket in leaderboard.json. CLI accepts --slice (csv), --seeds, --agents (csv filter), --tasks (csv filter), --bracket, --retries, --runs-root. Tests: 26 new TS tests across tournament_{discovery,leaderboard,bracket,summary,resume}.test.ts — discovery (live + synthetic dirs + manifest validation), leaderboard (percentiles, recovery_count, decline_count, sort tiebreakers, multi-slice + overall), bracket (2/3/4 agents, ties, alphabetical seeding), summary I/O round trip, end-to-end resume against the trivial agent on the hard fixture (asserts the leaderboard.json shape, the summary.json sidecar, and that re-entry runs ZERO cells). 148 TS tests + 7 Python tests passing."
     },
     {
       "id": "US-011",

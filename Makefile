@@ -38,10 +38,11 @@ eval:
 	@echo "==> make eval AGENT=$(AGENT) SLICE=$(SLICE) SEEDS=$(SEEDS)$(if $(RETRIES), RETRIES=$(RETRIES))"
 	npx tsx harness/ts/cli/eval.ts --agent=$(AGENT) --slice=$(SLICE) --seeds=$(SEEDS) $(if $(RETRIES),--retries=$(RETRIES))
 
+BRACKET ?= off
+
 tournament:
-	@echo "==> make tournament SLICE=$(SLICE) SEEDS=$(SEEDS)"
-	@echo "Note: full tournament lands in US-010. Stub only for now."
-	npx tsx harness/ts/cli/tournament.ts --slice=$(SLICE) --seeds=$(SEEDS)
+	@echo "==> make tournament SLICE=$(SLICE) SEEDS=$(SEEDS) BRACKET=$(BRACKET)"
+	npx tsx harness/ts/cli/tournament.ts --slice=$(SLICE) --seeds=$(SEEDS) --bracket=$(BRACKET)
 
 report:
 	@echo "==> make report"

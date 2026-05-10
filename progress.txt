@@ -212,6 +212,39 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   recording a failure). Other slices default to 0; CLI override is
   `--retries=N`. When US-010's tournament runner lands, reuse this
   table — do not re-derive retries from slice in tournament code.
+- Tournament runner (US-010) at harness/ts/tournament/. Modules:
+  discovery.ts (scan agents/<id>/, parse manifest.yaml, skip invalid
+  with warning), summary.ts ({read,write,has}Summary +
+  summaryPath({runsRoot,agent,task,seed}) → <runs>/<a>/<t>/<s>/summary.json),
+  leaderboard.ts (aggregate(summaries) → per-agent rows with the AC #4
+  metrics; champion sort: success_pct desc, mean_cost_usd asc,
+  p95_latency_ms asc), bracket.ts (single-elim snake seeding + same
+  tiebreakers; null when <2 agents), runner.ts (runTournament + runCell
+  for both TS and Python agents via the existing PythonAgentBridge).
+  CLI at harness/ts/cli/tournament.ts; Makefile passes BRACKET=on|off.
+- Done-marker for tournament resumability is summary.json next to
+  trajectory.jsonl.gz — NOT the .gz itself. The summary carries final
+  metrics (steps, cost, latency, terminal_state, pass) so leaderboard
+  generation never has to gunzip the trajectory. summary.json is
+  written ONCE per cell, after all retries, in runOrResumeCell.
+- Per-cell retry semantics in tournament: the WHOLE cell (open
+  trajectory + agent.run + verify) re-runs on a failed attempt; each
+  attempt overwrites the same trajectory.jsonl.gz path. Only the FINAL
+  attempt's summary.json sticks. fixtures.reset() runs between
+  attempts so server-side state is fresh. Retry count comes from
+  SLICE_RETRIES (shared with eval) unless --retries overrides.
+- Tournament respects per-difficulty budgets via DIFFICULTY_BUDGETS in
+  harness/ts/eval/runner.ts (easy/medium/hard tiers per AC #2). Don't
+  duplicate the table in tournament code — import it.
+- BUDGET_EXCEEDED is NOT a decline. decline_count counts ONLY cells
+  whose terminal_state is exactly "DECLINED". recovery_count counts
+  cells where pass=true AND attempts>1 (retried, then passed). Both
+  rules tested in tournament_leaderboard.test.ts.
+- Bracket flag `--bracket=on` is opt-in. With <2 agents, buildBracket
+  returns null and the leaderboard slice has no `bracket` field. For
+  >=2 agents, snake seeding pairs (1 vs N), (2 vs N-1), …; odd counts
+  give the top seed a bye. Use `seeding: 'alphabetical'` in tests
+  where you want bracket structure independent of metric tiebreakers.
 ---
 
 ## 2026-05-08 - US-001
@@ -1100,4 +1133,127 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     as unset when the flag is absent. So `make eval RETRIES=0
     AGENT=baseline SLICE=easy` correctly disables retries on the
     easy slice.
+---
+
+## 2026-05-09 - US-010
+- Resumable tournament runner. Auto-discovers agents under agents/<id>/,
+  enforces per-difficulty budgets, skips already-completed cells via a
+  summary.json sidecar, and emits runs/leaderboard.json with the AC #4
+  metrics. `--bracket=on` adds a single-elimination matchup per slice.
+- New module at harness/ts/tournament/ with:
+  - types.ts: AgentManifest, DiscoveredAgent, CellSummary,
+    LeaderboardRow, BracketResult, LeaderboardFile.
+  - discovery.ts: discoverAgents({repoRoot,agentsDir,filterIds,onWarn})
+    walks agents/, parses manifest.yaml via the existing
+    harness/ts/verifier/yaml.ts, requires {id, language, summary},
+    and skips dirs with broken manifests (warning, not abort).
+    validateManifest is exported for unit tests.
+  - summary.ts: summaryPath({runsRoot,agent,task,seed}) → JSON path;
+    {read,write,has}Summary do the I/O. The summary file is the
+    tournament's done-marker — leaderboard aggregation reads it back
+    without ever gunzipping trajectory.jsonl.gz.
+  - leaderboard.ts: aggregate(summaries) → per-agent rows
+    {success_pct, mean_steps, mean_cost_usd, p50_latency_ms,
+    p95_latency_ms, recovery_count, decline_count}, sorted by
+    champion-tiebreaker rules. percentile() does linear interpolation;
+    decline_count counts ONLY DECLINED, recovery_count counts pass
+    AND attempts>1. buildLeaderboardFile builds the per-slice + overall
+    JSON shape. formatLeaderboard renders the human-readable summary.
+  - bracket.ts: buildBracket(rows, {seeding}) snake-seeds the leaderboard
+    rows (1vN, 2vN-1, …) and progresses winners; odd counts give the
+    top seed a bye. Tiebreakers match the leaderboard sort. Returns null
+    for <2 agents.
+  - runner.ts: runTournament({slices, seeds, runsRoot, agents?, agentFilter?,
+    tasksBySlice?, taskFilter?, bracket?, retries?, ...}). For each
+    (agent, task, seed) cell: if summary.json exists, load it and emit a
+    `resume` progress line; else run runCell (TS path = dynamic import +
+    `new mod.default()`; Python path = PythonAgentBridge.spawn +
+    runPythonAgent). After runCell, write summary.json, retry on failure
+    up to retries+1 attempts (fixtures.reset between attempts). Final
+    summary.json overwrites whatever the per-attempt write set.
+    runTournament returns {leaderboard, summariesBySlice, leaderboardPath,
+    agents}. Re-exports loadSliceTasks and formatLeaderboard.
+  - index.ts re-exports the public surface.
+- harness/ts/cli/tournament.ts replaces the stub. Args: --slice (csv),
+  --seeds, --agents (csv filter), --tasks (csv filter), --bracket=on|off,
+  --retries=N, --runs-root. Prints formatLeaderboard to stdout, then the
+  written-to path. Exit 1 on internal error only.
+- Makefile gains BRACKET ?= off; the tournament target now passes through
+  --bracket=$(BRACKET). Stub note removed.
+- Tests (26 new TS tests, all passing):
+  - tournament_discovery.test.ts (6) — finds the live click-first-link
+    agents in agents/, filterIds excludes non-matching, skips dirs with
+    missing/broken manifests, rejects language-vs-file-presence mismatch,
+    validateManifest field requirements, validateManifest rejects
+    non-string approach_keywords entries.
+  - tournament_leaderboard.test.ts (8) — percentile (empty/single/midpoint
+    interp), aggregate computes the documented metrics + ranks alpha
+    above beta, ties on success_pct break by lower mean_cost_usd, then by
+    lower p95_latency_ms; buildLeaderboardFile emits per-slice and
+    overall sections.
+  - tournament_bracket.test.ts (7) — <2 agents → null, 2 agents single
+    matchup, 4 agents 2 rounds with snake seeding, odd count gives top
+    seed a bye, ties on success_pct cascade through cost then p95,
+    alphabetical seeding option.
+  - tournament_summary.test.ts (3) — summaryPath layout, readSummary
+    returns null on missing file, writeSummary→readSummary round-trip.
+  - tournament_resume.test.ts (3, Chrome-driven) — first run writes
+    leaderboard.json with the documented per-row shape, summary.json
+    sidecar exists, trajectory.jsonl.gz exists; second run with the same
+    runsRoot emits ZERO `run` progress lines and ONE `resume` line, and
+    surfaces reused=true; bracket=true with two real agents produces a
+    winner; leaderboard.json lands at runs/<root>/leaderboard.json.
+- Manual smoke from the project root:
+    npx tsx harness/ts/cli/tournament.ts --slice=hard --seeds=1 \
+      --tasks=hard-shadow-form --runs-root=/tmp/x --bracket=on \
+      --agents=click-first-link
+  prints the leaderboard table, writes /tmp/x/leaderboard.json. Re-running
+  shows the `resume` line and zero re-executions.
+- Files changed/added:
+  - new: harness/ts/tournament/{types,discovery,summary,leaderboard,
+    bracket,runner,index}.ts
+  - rewrite: harness/ts/cli/tournament.ts (was a stub)
+  - new tests: harness/ts/tests/tournament_{discovery,leaderboard,
+    bracket,summary,resume}.test.ts
+  - Makefile (BRACKET var; drop stub note)
+  - README.md (Running a tournament section expanded with CLI usage,
+    resume semantics, leaderboard schema, bracket behaviour)
+  - prd.json, progress.txt
+- Quality checks: `npm run typecheck` clean; `npm test` 148/148 (26 new);
+  `uv run pytest -q` 7/7 unchanged. `make eval AGENT=trivial SLICE=hard`
+  unchanged 10/10 fail (regression sentinel).
+- **Learnings for future iterations:**
+  - The Trajectory in-memory snapshot arrays (snapshotSteps,
+    snapshotLlmCalls) remain accessible AFTER `finish()` returns —
+    `finish()` only closes the writer and gzips. This is the right
+    surface to pull cost/steps/tokens from when building summary.json;
+    don't try to gunzip + JSONL-parse in the runner.
+  - When refactoring eval/runner.ts shared helpers (DIFFICULTY_BUDGETS,
+    defaultRetriesForSlice, runWithRetry), import them — do NOT copy.
+    A second source of truth on per-difficulty budgets / retry policy
+    is exactly the bug US-009's progress notes warned about.
+  - Resumability marker is summary.json, not trajectory.jsonl.gz. The
+    .gz exists DURING a run (between trajectory.finish and the next
+    finish() call wiping it on retry), so checking the .gz could yield
+    a false "done" state in a partial cell. summary.json is written
+    ONCE, AFTER all retries, so its presence is monotonic.
+  - For the integration test, isolate runsRoot to a fresh mkdtemp dir
+    per test so resumability assertions don't pick up cells from a
+    prior run. Run the trivial agent on a single hard fixture
+    (hard-shadow-form) — Chrome boot is the dominant cost (~1s) and
+    fewer cells = faster test.
+  - bracket=true on a 1-agent tournament returns no bracket (null);
+    the leaderboard slice simply has no `bracket` field. Don't try to
+    "self-pair" a single agent — buildBracket returns null and the
+    runner respects that.
+  - Python tournament cells reuse the existing PythonAgentBridge —
+    spawn once per cell, runPythonAgent registers handlers, await
+    `agent.run`, close the bridge in finally. The TS path uses
+    `pathToFileURL(agentFile)` because dynamic `import()` of an
+    absolute path needs a `file://` URL on Node ESM (same trick the
+    eval runner already uses).
+  - Leaderboard sort = champion sort = bracket tiebreakers (success_pct
+    desc, mean_cost_usd asc, p95_latency_ms asc). Keep these aligned
+    when US-023 declares a champion — they all live in the same file
+    (leaderboard.ts pickWinner / aggregate sort).
 ---

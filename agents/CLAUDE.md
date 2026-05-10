@@ -129,6 +129,11 @@ distinct from.
 
 ## Trajectory output layout
 
-Every run lands at `runs/<agent_id>/<task_id>/<seed>/trajectory.jsonl.gz`.
-Presence of the `.gz` file is the resumable-runner's done-marker (US-010);
-do not touch the `.gz` after `finish()` returns.
+Every run lands at `runs/<agent_id>/<task_id>/<seed>/`:
+
+- `trajectory.jsonl.gz` — the gzipped JSONL trajectory.
+- `verdict.json` — the verifier's verdict (US-005 sidecar).
+- `summary.json` — the tournament runner's per-cell metrics + done-marker
+  (US-010). Presence means the cell is complete; the resumable
+  tournament runner skips any cell whose `summary.json` exists. Do NOT
+  write or rename this file from inside an agent — the harness owns it.
