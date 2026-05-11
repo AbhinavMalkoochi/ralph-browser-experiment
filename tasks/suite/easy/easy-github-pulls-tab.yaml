@@ -1,0 +1,18 @@
+id: easy-github-pulls-tab
+goal: |
+  Start at the public GitHub repository github.com/nodejs/node. The
+  repo page has a navigation bar at the top with tabs: Code, Issues,
+  Pull requests, etc. Click the "Pull requests" tab. The agent should
+  arrive at /nodejs/node/pulls — GitHub's pull-request list for the
+  Node.js repository.
+start_url: "https://github.com/nodejs/node"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+  - interactive
+  - pattern:github_repo_pulls_tab
+verifier:
+  kind: js
+  expression: "(/^\\/nodejs\\/node\\/pulls\\/?$/i.test(document.location.pathname) && /(open|closed|pull request|draft)/i.test(document.body.innerText))"

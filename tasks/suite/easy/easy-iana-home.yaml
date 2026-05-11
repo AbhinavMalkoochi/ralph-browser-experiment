@@ -1,14 +1,17 @@
 id: easy-iana-home
 goal: |
-  Visit the IANA homepage at iana.org. The agent should land on a page that
-  identifies itself as the Internet Assigned Numbers Authority. No login
-  is required.
+  Visit the IANA homepage at https://www.iana.org/ and confirm the
+  landing page identifies itself as the Internet Assigned Numbers
+  Authority. The agent should remain on the root path "/"; this is a
+  canary extraction task.
 start_url: "https://www.iana.org/"
 difficulty: easy
 tags:
   - easy
-  - navigate
+  - extract
   - public
+  - canary
+  - pattern:iana_home_extract
 verifier:
   kind: js
-  expression: "(/internet assigned numbers authority/i.test(document.body.innerText) || /\\bIANA\\b/.test(document.body.innerText))"
+  expression: "((document.location.pathname === '/' || document.location.pathname === '') && document.location.hash === '' && (/internet assigned numbers authority/i.test(document.body.innerText) || /\\bIANA\\b/.test(document.body.innerText)))"

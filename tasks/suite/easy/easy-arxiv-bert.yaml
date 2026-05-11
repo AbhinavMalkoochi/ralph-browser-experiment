@@ -1,13 +1,17 @@
 id: easy-arxiv-bert
 goal: |
-  Open the arXiv abstract page for paper 1810.04805 (the BERT paper).
-  Confirm the abstract names BERT in the title or abstract.
+  Open the arXiv abstract page for paper 1810.04805 (the BERT paper) at
+  /abs/1810.04805 and confirm the abstract names BERT. The agent should
+  remain on the abstract page (do not click into PDF or other views);
+  this is a canary extraction task.
 start_url: "https://arxiv.org/abs/1810.04805"
 difficulty: easy
 tags:
   - easy
   - extract
   - public
+  - canary
+  - pattern:arxiv_abs_extract
 verifier:
   kind: js
-  expression: "/\\bBERT\\b/.test(document.body.innerText)"
+  expression: "(/^\\/abs\\/1810\\.04805/i.test(document.location.pathname) && /\\bBERT\\b/.test(document.body.innerText))"

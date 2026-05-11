@@ -1,0 +1,19 @@
+id: easy-mdn-cross-link
+goal: |
+  Start at the MDN Web Docs reference for Array.prototype.map at
+  /en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map. MDN
+  pages have a "See also" section near the bottom that links to
+  related methods. Click the "Array.prototype.filter()" link in the
+  See-also section. The agent should arrive at the sibling reference
+  page /en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/filter.
+start_url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+  - interactive
+  - pattern:mdn_see_also_link
+verifier:
+  kind: js
+  expression: "(/\\/Array\\/filter$/i.test(document.location.pathname) && /(test function|new array|predicate|callback)/i.test(document.body.innerText))"

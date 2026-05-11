@@ -1,0 +1,18 @@
+id: easy-cern-nested-page
+goal: |
+  Start at the info.cern.ch landing page (http://info.cern.ch/). The
+  page links to "the very first web page" — a copy of the original
+  World Wide Web project page hosted at /hypertext/WWW/TheProject.html.
+  Click that link. The agent should arrive at the
+  /hypertext/WWW/TheProject.html page — the historical project page.
+start_url: "http://info.cern.ch/"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+  - interactive
+  - pattern:cern_nested_link
+verifier:
+  kind: js
+  expression: "(/\\/TheProject\\.html$/i.test(document.location.pathname) && /(world[- ]?wide[- ]?web|hypertext|project)/i.test(document.body.innerText))"

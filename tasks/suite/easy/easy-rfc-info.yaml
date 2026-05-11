@@ -1,0 +1,18 @@
+id: easy-rfc-info
+goal: |
+  Open the RFC-Editor info page at /info/rfc791 (the metadata entry for
+  RFC 791). Confirm the page is the metadata view for RFC 791 — title
+  "Internet Protocol", abstract / status / authors listed. The agent
+  should remain on /info/rfc791 (do not click into a specific format
+  view); this is a canary extraction task.
+start_url: "https://www.rfc-editor.org/info/rfc791"
+difficulty: easy
+tags:
+  - easy
+  - extract
+  - public
+  - canary
+  - pattern:rfc_info_extract
+verifier:
+  kind: js
+  expression: "(/^\\/info\\/rfc791/i.test(document.location.pathname) && /internet protocol/i.test(document.body.innerText) && /\\bRFC\\s*791\\b/i.test(document.body.innerText))"

@@ -1,13 +1,18 @@
 id: easy-mdn-array-map
 goal: |
-  Open the MDN Web Docs reference for Array.prototype.map. Confirm the
-  page documents the callback function the method takes.
+  Open the MDN Web Docs reference for Array.prototype.map at
+  /en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map and
+  confirm the page documents the callback function. The agent should
+  remain on this reference page (do not navigate to another MDN page);
+  this is a canary extraction task.
 start_url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map"
 difficulty: easy
 tags:
   - easy
   - extract
   - public
+  - canary
+  - pattern:mdn_reference_extract
 verifier:
   kind: js
-  expression: "(/callback/i.test(document.body.innerText) && /array/i.test(document.body.innerText))"
+  expression: "(/\\/Array\\/map$/i.test(document.location.pathname) && /callback/i.test(document.body.innerText) && /array/i.test(document.body.innerText))"

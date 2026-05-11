@@ -1,0 +1,19 @@
+id: easy-python-downloads-nav
+goal: |
+  Start at the Python homepage https://www.python.org/. The site has a
+  top navigation bar with sections: About, Downloads, Documentation,
+  Community, Success Stories, News, Events. Click the "Downloads"
+  link in the top navigation. The agent should arrive at /downloads/
+  — Python's downloads landing page listing the latest release for
+  each platform.
+start_url: "https://www.python.org/"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+  - interactive
+  - pattern:python_nav_link
+verifier:
+  kind: js
+  expression: "(/^\\/downloads\\/?$/i.test(document.location.pathname) && /(download|python\\s*3|release|installer)/i.test(document.body.innerText))"

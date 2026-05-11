@@ -563,6 +563,22 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   insensitive regex (real sites change copy). hard_real_slice.test.ts
   enforces both. Combine URL check with body-text check via && so a
   copy change OR a route rename can fall back to the other signal.
+- Easy slice v2 (US-029, supersedes US-009) at tasks/suite/easy/ is
+  22 tasks split into 8 canaries (extract skill + `canary` tag, strict
+  pathname+hash verifier) and 14 interactive tasks (search/navigate/
+  fill skill + `interactive` tag, verifier REQUIRES document.location
+  regex match AND /.../i body match). Each task carries a unique
+  `pattern:<id>` tag; the validator at easy_slice.test.ts asserts no
+  two tasks share a pattern. Adding a new easy task = drop a YAML
+  + give it a unique pattern + the right bucket tag. Canary verifier
+  shape (kills click-first-link's skip-anchor wins):
+    `pathname === '<path>' && hash === '' && /<body>/i`
+  Interactive verifier shape (mirrors hard-real US-026 invariant):
+    `<document.location.* check> && /<body>/i`
+  10 distinct hosts (example.com, en.wikipedia.org, www.rfc-editor.org,
+  developer.mozilla.org, arxiv.org, httpbin.org, www.iana.org,
+  info.cern.ch, github.com, www.python.org). The first 8 hosts are
+  also forbidden for hard-real per hard_real_slice.test.ts.
 - Hard-app slice (US-027) at tasks/suite/hard-app/ targets four
   self-hosted SPAs booted via infra/docker/docker-compose.yml
   (gitea:3001 / excalidraw:3002 / bookstack:3003 / vikunja:3004 —
@@ -3153,4 +3169,119 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     a counter-argument to the US-031 "vision agents are dead
     without SoM" framing (the verdict depends heavily on what
     the UI looks like).
+---
+
+## 2026-05-11 - US-029
+- Replaced the easy slice's 22 single-page extraction tasks with a
+  bucketed 22-task mix: 8 canaries (`canary` tag + `extract` skill,
+  strict pathname+hash verifier) + 14 interactive tasks
+  (`interactive` tag + `search`/`navigate`/`fill` skill, verifier
+  requires document.location regex match + /.../i body match). Slice
+  now spans 10 distinct hosts (added github.com and www.python.org;
+  removed easy-only single-extraction wiki/RFC/MDN/example.{org,net}/
+  httpbin-html variants).
+- Each task carries a unique `pattern:<id>` tag enforced by the
+  validator — strongest possible "no fixture-pattern twice" check.
+  14 interactive patterns: wiki_search_box, wiki_inline_link,
+  wiki_action_tab, mdn_see_also_link, mdn_toc_anchor, rfc_format_link,
+  arxiv_listing_click, github_repo_issues_tab, github_repo_file_click,
+  github_repo_pulls_tab, iana_nav_link, cern_nested_link,
+  httpbin_form_submit, python_nav_link.
+- harness/ts/tests/easy_slice.test.ts went from 10 → 15 tests. New
+  invariants:
+   * exactly 22 tasks (was >= 20)
+   * exactly one of {canary, interactive} per task
+   * <= 8 canaries (AC #1 ceiling)
+   * >= 14 interactive (AC #1 floor)
+   * interactive js verifiers check document.location AND use /.../i
+   * each task has exactly one pattern:<id> tag with globally unique value
+- tasks/CLAUDE.md §Easy slice section rewritten as §Easy slice v2 with
+  bucket convention, verifier shape rules per bucket, and a "Why two
+  buckets?" rationale explaining the pre-US-029 signal compression.
+- Live AC #5 verification: `eval --agent=trivial --slice=easy
+  --seeds=1 --retries=0` → click-first-link passes 4/22 (18.2%),
+  exactly at the AC ceiling. Three passes are canaries whose start_url
+  has a skip-to-content anchor or zero `<a>` tags
+  (arxiv-bert, mdn-array-map, httpbin-headers); the fourth
+  (cern-nested-page) is a coincidental hit because info.cern.ch's
+  first link IS the task's target.
+- Live AC #6 sweep: 8 LLM agents × 22 tasks × 1 seed = 176 cells,
+  gpt-4o-mini at temperature=0, easy-tier budget (50k tokens / $0.20
+  / 60s wall / 15 steps per task), 8 parallel tournament processes
+  on one shared runs-root, ~16 min wall clock total. Final scores:
+   * network-shadow      19/22 (86.4%) — Σ cost $0.0125
+   * predicate-driven    17/22 (77.3%) — Σ cost $0.0199
+   * baseline-a11y-react 17/22 (77.3%) — Σ cost $0.0237
+   * speculative-rollback 17/22 (77.3%) — Σ cost $0.0295
+   * plan-then-execute   16/22 (72.7%) — Σ cost $0.0050  (cheapest)
+   * dom-mutation-stream 16/22 (72.7%) — Σ cost $0.0155
+   * runtime-codegen     16/22 (72.7%) — Σ cost $0.0228
+   * vision-grounded      8/22 (36.4%) — Σ cost $0.1201  (pixel-coord
+       centre-bias kills it on dense nav bars: GitHub tabs, IANA top
+       nav, MDN sidebar; same documented failure mode as US-018)
+- ~12-point spread vs the pre-US-029 4-point spread proves the slice
+  now discriminates between mechanisms. Tasks NOBODY-easily-passes
+  cluster: easy-mdn-cross-link (2 passers), easy-arxiv-listing (3),
+  easy-rfc-format-link (3), easy-mdn-toc-anchor (4),
+  easy-wiki-article-link (3) — these are the v2 slice's hardest
+  interactive tasks. Tasks EVERYONE passes (7): the 7 canaries
+  except easy-iana-home (vision missed) — those are now confirmed
+  as trivial smoke tests.
+- Total sweep cost ~$2.49 in OpenAI tokens; vision-grounded ~$0.12 of
+  it. plan-then-execute is the cheap-but-good champ ($0.005 for
+  16/22 passes).
+- Tests: 5 new in easy_slice.test.ts (canary/interactive bucket,
+  count limits, verifier-shape, pattern uniqueness); 5 of the
+  original 10 reshaped. 464 TS tests + 7 Python tests passing
+  (464 = 459 prior + 5 net new from US-029).
+- Files changed:
+   * tasks/suite/easy/*.yaml — replaced all 22 specs (13 deleted,
+     9 updated, 13 added).
+   * harness/ts/tests/easy_slice.test.ts — 15 contract tests.
+   * tasks/CLAUDE.md — §Easy slice v2 section.
+   * docs/easy-v2-results-2026-05-11.md (new) — full sweep results
+     + per-task matrix + reproduction recipe.
+   * prd.json + progress.txt.
+- Quality checks: `npm run typecheck` clean; `npm test` 464/464;
+  `uv run pytest -q` 7/7.
+- **Learnings for future iterations:**
+  - The `pattern:<id>` tag pattern is a strong "no duplicate fixture"
+    enforcer that's also greppable. Future slices that want similar
+    breadth guarantees should adopt this convention rather than
+    relying on (host, skill) uniqueness — multiple navigate tasks
+    on the same host are legit if their mechanism (text-search vs
+    tab vs inline-link) differs.
+  - For real-site canaries that risk passing click-first-link via
+    skip-to-content anchors, add `document.location.hash === ''` to
+    the verifier. Most LLM-using agents don't add a hash mid-run, so
+    this is safe. It is the simplest knob to push the trivial agent's
+    pass rate down without making canaries materially harder.
+  - The pre-US-029 slice had a structural signal-compression bug:
+    the eval runner pre-navigates to start_url BEFORE agent.run(),
+    so any agent that declines or no-ops sees its verifier run on
+    the start_url's body. Body-text-only verifiers therefore pass
+    universally on the easy slice — the bar is "did the test rig
+    do its job", not "did the agent do anything". The fix is to
+    require URL-shape change in the verifier; this is the same
+    pattern hard-real (US-026) already uses.
+  - Real-site latency varies a lot. Wikipedia is ~1s/page,
+    arxiv.org is ~2-3s, github.com is ~3-5s, MDN is ~2s, info.cern.ch
+    is ~50ms. Easy budget (60s wall) is enough for 5-15 sequential
+    page loads but NOT for vision agents that ship a screenshot per
+    step on a 4-step task — vision-grounded routinely consumed 11s
+    mean cell latency on the v2 slice and still timed out on dense
+    UIs because the LLM call alone is 5-8s.
+  - Parallel tournament processes on one shared runs-root work
+    cleanly: per-agent subdirectories prevent contention, and the
+    per-cell summary.json done-marker is atomic. 8-way parallelism
+    on this workstation kept all cores warm without hitting OpenAI
+    TPM limits at the model's default rate (gpt-4o-mini). Pattern
+    is the same as the US-027 iter-2 hard-app sweep.
+  - When picking the click-first-link FAIL invariant, the safest
+    canary verifier shape is:
+       `pathname === '<exact_path>' && hash === '' && /<body_text>/i`
+    The exact-pathname plus empty-hash combination kills both
+    skip-anchor hash adds and full-URL changes. Body-text alone
+    is not enough; URL-shape alone is not enough either (because
+    some bodies are dynamically loaded by JS after navigate).
 ---

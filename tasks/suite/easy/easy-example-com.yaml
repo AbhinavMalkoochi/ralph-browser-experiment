@@ -1,14 +1,17 @@
 id: easy-example-com
 goal: |
-  Open the canonical IANA-reserved domain at example.com and confirm it has
-  loaded. The page should advertise itself as the "Example Domain". No login
-  or destructive action is required; the agent only has to land on the page.
+  Open the canonical IANA-reserved domain at example.com and confirm it
+  has loaded. The agent should stay on the root path "/" of example.com;
+  the page advertises itself as the "Example Domain". This is a canary
+  test: no clicks or navigation away from the landing page are needed.
 start_url: "https://example.com/"
 difficulty: easy
 tags:
   - easy
-  - navigate
+  - extract
   - public
+  - canary
+  - pattern:example_landing_extract
 verifier:
   kind: js
-  expression: "(/example domain/i.test(document.title) || /example domain/i.test(document.body.innerText))"
+  expression: "(document.location.pathname === '/' && document.location.hash === '' && /example domain/i.test(document.body.innerText))"

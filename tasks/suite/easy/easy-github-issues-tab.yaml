@@ -1,0 +1,18 @@
+id: easy-github-issues-tab
+goal: |
+  Start at the public GitHub repository github.com/nodejs/node. The
+  repo page has a navigation bar at the top with tabs: Code, Issues,
+  Pull requests, Actions, Projects, etc. Click the "Issues" tab. The
+  agent should arrive at /nodejs/node/issues — GitHub's issue list
+  for the Node.js repository.
+start_url: "https://github.com/nodejs/node"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+  - interactive
+  - pattern:github_repo_issues_tab
+verifier:
+  kind: js
+  expression: "(/^\\/nodejs\\/node\\/issues\\/?$/i.test(document.location.pathname) && /(open|closed|issue|pull request)/i.test(document.body.innerText))"

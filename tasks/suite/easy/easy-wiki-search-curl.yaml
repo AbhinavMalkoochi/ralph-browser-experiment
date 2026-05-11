@@ -1,13 +1,18 @@
 id: easy-wiki-search-curl
 goal: |
-  Use the Wikipedia search results page to look up "cURL command line
-  tool". Confirm the resulting page contains a reference to cURL.
-start_url: "https://en.wikipedia.org/w/index.php?search=cURL+command+line+tool&title=Special%3ASearch&fulltext=1"
+  Start at the Wikipedia main page. Use the on-page search box (the
+  "Search Wikipedia" text input) to look up the query
+  "cURL command line tool" and submit the search. The agent should
+  arrive at the article /wiki/CURL — Wikipedia's article on the cURL
+  command-line tool / libcurl library.
+start_url: "https://en.wikipedia.org/wiki/Main_Page"
 difficulty: easy
 tags:
   - easy
   - search
   - public
+  - interactive
+  - pattern:wiki_search_box
 verifier:
   kind: js
-  expression: "/curl/i.test(document.body.innerText)"
+  expression: "(/^\\/wiki\\/cURL$/i.test(document.location.pathname) && /(\\bcURL\\b|libcurl|command[\\s-]?line)/i.test(document.body.innerText))"

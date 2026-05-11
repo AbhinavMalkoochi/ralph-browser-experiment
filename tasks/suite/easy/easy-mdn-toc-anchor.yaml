@@ -1,0 +1,20 @@
+id: easy-mdn-toc-anchor
+goal: |
+  Start at the MDN Web Docs reference for Array.prototype.filter at
+  /en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/filter. The
+  page has a left-side table of contents with a link to the
+  "Examples" heading. Click the "Examples" entry in the table of
+  contents. The agent should remain on the /Array/filter page but the
+  URL hash should become #examples (i.e. the anchor of the Examples
+  section).
+start_url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/filter"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+  - interactive
+  - pattern:mdn_toc_anchor
+verifier:
+  kind: js
+  expression: "(/\\/Array\\/filter$/i.test(document.location.pathname) && /^#examples$/i.test(document.location.hash) && /(filter|callback|return|examples)/i.test(document.body.innerText))"

@@ -110,38 +110,96 @@ times. Override at the CLI with `--retries=N`. The retry happens around the
 whole cell, including `fixtures.reset()` — so server-side state IS reset
 between attempts, which is the intended behaviour for live-site flakiness.
 
-## Easy slice (`tasks/suite/easy/`, US-009)
+## Easy slice v2 (`tasks/suite/easy/`, US-029 — supersedes US-009)
 
-The easy slice is ~20 tasks across 10+ public sites; it's the cheap "is the
-agent wired up correctly?" smoke. Author conventions:
+The easy slice is 22 tasks across 10+ public sites. **It is no longer a
+pure-extraction slice** — US-029 replaced the trivial "open URL → regex
+on body" tasks with multi-step interactive flows that exercise click,
+type, scroll, and cross-page navigation. The slice still passes in
+<60s/task for a competent agent and gives signal between mechanisms.
+
+The slice is divided into two buckets, marked by tag:
+
+- **Canaries** (`canary` tag + `extract` skill): single-page extraction
+  tests. The agent only has to stay on the start URL and read body
+  content. Max 8 canaries. They are smoke tests for the harness, NOT
+  signal for agent mechanisms.
+- **Interactive** (`interactive` tag + `{search, navigate, fill}`
+  skill): require >=3 in-page interactions OR cross-page navigation.
+  Verifier asserts the URL changed (pathname / search / hash) to a
+  specific destination, so a no-op or click-first-link agent fails. Min
+  14 interactive.
+
+Author conventions:
 
 - `id: easy-<slug>` (every easy task id starts with `easy-`).
 - `difficulty: easy`.
-- Goal text: <= 120 words. Keep it tight; ideally <= 60 words.
-- Tags MUST include `easy` plus exactly ONE of
-  `{search, navigate, extract, fill}`. Add as many descriptive tags
-  (`public`, `wikipedia`, etc.) as you like, but the validator
-  (`easy_slice.test.ts`) asserts exactly one skill tag.
+- Goal text: <= 120 words. Keep it tight; ideally <= 80 words.
+- Tags MUST include:
+   * `easy`
+   * exactly ONE of `{search, navigate, extract, fill}` (the skill tag)
+   * exactly ONE of `{canary, interactive}` (the bucket tag)
+   * exactly ONE `pattern:<unique_pattern_id>` tag — the value is unique
+     across ALL tasks in the slice. This is the AC-2 "no fixture-pattern
+     twice" enforcer. Pick descriptive names like
+     `pattern:wiki_search_box`, `pattern:github_repo_issues_tab`,
+     `pattern:mdn_see_also_link`.
+   * any descriptive tags you like (`public`, etc.); the validator
+     ignores them as long as the structural ones above are present.
 - `start_url` MUST be `http://` or `https://` (no `fixtures://` —
   fixtures are for hard).
 - `verifier.kind` MUST be `js` or `trajectory_predicate`. No `llm_judge`
   in easy (the slice is meant to be cheap; LLM-judge tasks belong in
   medium / hard).
+- **Interactive verifiers** MUST check `document.location` (so the
+  cross-page navigation is observable from the verdict) AND MUST use
+  a case-insensitive regex (`/.../i`) somewhere in the expression
+  (real sites change copy). Combine `document.location.pathname` with
+  a body-text regex via `&&` — the URL signal is structural (resists
+  copy edits) and the body signal is semantic (resists route renames).
+- **Canary verifiers** check `document.location.pathname` equals the
+  start URL's path AND `document.location.hash === ''` AND body has
+  expected content — this is the strict shape that makes
+  click-first-link fail even when the only link on the page is a
+  `#skip-to-content` accessibility anchor.
 - The verifier expression should NOT depend on auth, paywalls, or
   destructive actions. Public-read endpoints only.
 - Cross-origin verifiers cannot `fetch('/__some_path')` because the page
   origin is the live site, not our fixtures server. Use
   `document.title`, `document.body.innerText`, or `document.location` —
-  match against a regex tolerant of minor copy edits (`/i`, allow
-  optional whitespace, prefer multi-keyword `&&` over a single brittle
-  string).
-- Stay achievable in <= 5 steps for an honest baseline agent. The agent
-  should reasonably be able to: navigate, optionally click one link,
-  optionally read a fact, optionally submit one form.
+  match against a regex tolerant of minor copy edits.
+- Stay achievable in <= 6 steps for an honest baseline agent. The
+  agent should reasonably be able to: navigate, click a link or two,
+  optionally type into one input, optionally submit one form.
 
-The validator at `harness/ts/tests/easy_slice.test.ts` enforces all of the
-above; adding a new easy task usually means dropping a YAML in this
-directory — the test picks it up automatically.
+The validator at `harness/ts/tests/easy_slice.test.ts` enforces all of
+the above; adding a new easy task usually means dropping a YAML in this
+directory — the test picks it up automatically. To delete a task,
+remove its YAML; to retag (canary <-> interactive), update the bucket
+tag and the verifier shape accordingly.
+
+### Why two buckets?
+
+The pre-US-029 slice was 22 single-page extractions. Almost every
+LLM-using agent scored 19+/22 because the page-text verifier matched
+before the agent did anything — the eval runner pre-navigates to
+`start_url`, so any agent that even fails-fast lands at the right URL.
+This compressed the slice's signal: a strong runtime-codegen agent and
+a hands-off click-first-link agent ended up only 2 points apart.
+
+The v2 design fixes this by splitting:
+- 8 canaries preserve the "is the harness wired up correctly" smoke.
+  An agent that no-ops still passes them (because the harness pre-
+  navigates), so we get a fast trivially-true baseline.
+- 14 interactive tasks require the agent to actually drive the page.
+  Verifiers assert the URL changed, so an agent that does nothing or
+  clicks the first irrelevant link fails. This is where mechanism
+  differences (search-box-finding, in-article-link-resolution,
+  tab-clicking, form-fill) actually surface.
+
+The slice still satisfies "competent agent passes >=14/22 in <60s/task"
+(roughly matches the easy budget of 50k tokens / $0.20 / 60s / 15
+steps).
 
 ## Hard-real slice (`tasks/suite/hard-real/`, US-026)
 

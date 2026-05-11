@@ -1,0 +1,18 @@
+id: easy-github-readme-blob
+goal: |
+  Start at the public GitHub repository github.com/nodejs/node. The
+  repo's file tree on the landing page lists files including
+  README.md. Click the README.md filename in the file tree. The agent
+  should arrive at a /nodejs/node/blob/<branch>/README.md URL —
+  GitHub's blob view of the README.
+start_url: "https://github.com/nodejs/node"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+  - interactive
+  - pattern:github_repo_file_click
+verifier:
+  kind: js
+  expression: "(/^\\/nodejs\\/node\\/blob\\/[^/]+\\/README\\.md$/i.test(document.location.pathname) && /(node\\.?js|javascript runtime|installation|README)/i.test(document.body.innerText))"

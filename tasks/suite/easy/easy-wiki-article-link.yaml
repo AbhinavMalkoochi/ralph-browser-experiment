@@ -1,0 +1,19 @@
+id: easy-wiki-article-link
+goal: |
+  Start at the Wikipedia article /wiki/Linux_kernel. The first
+  paragraph references Unix as the operating system Linux was modelled
+  after; this reference is a hyperlink to the Wikipedia article on
+  Unix. Click that "Unix" link in the article body. The agent should
+  arrive at /wiki/Unix — Wikipedia's article on the Unix operating
+  system.
+start_url: "https://en.wikipedia.org/wiki/Linux_kernel"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+  - interactive
+  - pattern:wiki_inline_link
+verifier:
+  kind: js
+  expression: "(/^\\/wiki\\/Unix$/i.test(document.location.pathname) && /(operating system|bell labs|ken thompson|dennis ritchie)/i.test(document.body.innerText))"

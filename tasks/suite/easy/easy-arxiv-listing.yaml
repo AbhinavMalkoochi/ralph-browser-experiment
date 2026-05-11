@@ -1,0 +1,19 @@
+id: easy-arxiv-listing
+goal: |
+  Start at the arXiv recent-listings page /list/cs.AI/recent (the
+  most-recent submissions to the Computer Science / Artificial
+  Intelligence category). The page lists ~25 paper entries, each with
+  an "abs" link to the paper's abstract page. Click any "abs" link
+  on the listing. The agent should arrive at an /abs/<arxiv-id>
+  page (a paper abstract).
+start_url: "https://arxiv.org/list/cs.AI/recent"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+  - interactive
+  - pattern:arxiv_listing_click
+verifier:
+  kind: js
+  expression: "(/^\\/abs\\/[0-9]{4}\\.[0-9]{4,6}(v[0-9]+)?$/i.test(document.location.pathname) && /(abstract|submitted|authors?)/i.test(document.body.innerText))"

@@ -1,0 +1,18 @@
+id: easy-iana-domains-nav
+goal: |
+  Start at the IANA homepage https://www.iana.org/. The homepage has a
+  top-level navigation menu with sections: Domain Names, Number
+  Resources, Protocol Assignments, etc. Click the "Domain Names" link
+  in the navigation. The agent should arrive at /domains — IANA's
+  Domain Names landing page describing root-zone management.
+start_url: "https://www.iana.org/"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+  - interactive
+  - pattern:iana_nav_link
+verifier:
+  kind: js
+  expression: "(/^\\/domains(\\/|$)/i.test(document.location.pathname) && /(domain|root zone|TLD|top-level)/i.test(document.body.innerText))"

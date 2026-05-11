@@ -1,13 +1,16 @@
 id: easy-httpbin-headers
 goal: |
-  Open httpbin.org/headers, which echoes the request headers as JSON.
-  Confirm the page contains the User-Agent the browser sent.
+  Open httpbin.org/headers, a JSON endpoint that echoes the request
+  headers. Confirm the response page is at path /headers and contains
+  the User-Agent the browser sent. This is a canary extraction task.
 start_url: "https://httpbin.org/headers"
 difficulty: easy
 tags:
   - easy
-  - navigate
+  - extract
   - public
+  - canary
+  - pattern:httpbin_json_extract
 verifier:
   kind: js
-  expression: "/user-?agent/i.test(document.body.innerText)"
+  expression: "(/^\\/headers/i.test(document.location.pathname) && /user-?agent/i.test(document.body.innerText))"

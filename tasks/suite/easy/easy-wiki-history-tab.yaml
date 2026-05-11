@@ -1,0 +1,18 @@
+id: easy-wiki-history-tab
+goal: |
+  Start at the Wikipedia article /wiki/Linux_kernel. Wikipedia exposes
+  a "View history" tab at the top of every article (it lives next to
+  the "Read" and "Edit" tabs). Click "View history". The agent should
+  arrive at a /w/index.php URL with action=history in the query string
+  — Wikipedia's revision-history view for the Linux kernel article.
+start_url: "https://en.wikipedia.org/wiki/Linux_kernel"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+  - interactive
+  - pattern:wiki_action_tab
+verifier:
+  kind: js
+  expression: "(/^\\/w\\/index\\.php/i.test(document.location.pathname) && /[?&]action=history(\\b|&|$)/i.test(document.location.search) && /linux_kernel/i.test(document.location.search))"

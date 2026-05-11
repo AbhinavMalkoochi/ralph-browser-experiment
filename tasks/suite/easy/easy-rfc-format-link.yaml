@@ -1,0 +1,19 @@
+id: easy-rfc-format-link
+goal: |
+  Start at the RFC-Editor info page /info/rfc791 (the metadata view
+  for RFC 791 — the Internet Protocol specification). The page lists
+  available formats (text, HTML, PDF). Click the "PDF" or "TEXT" or
+  "HTML" format link — any one that leads to the actual RFC body. The
+  agent should arrive at /rfc/rfc791.<ext> where <ext> is one of
+  {txt, pdf, html} — the canonical RFC body view.
+start_url: "https://www.rfc-editor.org/info/rfc791"
+difficulty: easy
+tags:
+  - easy
+  - navigate
+  - public
+  - interactive
+  - pattern:rfc_format_link
+verifier:
+  kind: js
+  expression: "(/^\\/rfc\\/rfc791\\.(txt|pdf|html?)$/i.test(document.location.pathname) && /(internet protocol|\\bRFC\\s*791\\b)/i.test(document.body.innerText))"

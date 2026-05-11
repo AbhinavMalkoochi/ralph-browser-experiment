@@ -1,13 +1,17 @@
 id: easy-wiki-linux
 goal: |
-  Open the Wikipedia article on the Linux kernel and confirm the article
-  identifies the original author. No login is required.
+  Open the Wikipedia article at /wiki/Linux_kernel and confirm the
+  article identifies Linus Torvalds as the original author. The agent
+  should remain on this article (do not navigate to another wiki page);
+  this is a canary extraction task.
 start_url: "https://en.wikipedia.org/wiki/Linux_kernel"
 difficulty: easy
 tags:
   - easy
   - extract
   - public
+  - canary
+  - pattern:wiki_article_extract
 verifier:
   kind: js
-  expression: "/linus torvalds/i.test(document.body.innerText)"
+  expression: "(/^\\/wiki\\/Linux_kernel$/i.test(document.location.pathname) && document.location.hash === '' && /linus torvalds/i.test(document.body.innerText))"

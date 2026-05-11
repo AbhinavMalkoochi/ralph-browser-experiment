@@ -1,14 +1,17 @@
 id: easy-info-cern
 goal: |
-  Visit info.cern.ch — the page commemorating the world's first website.
-  The agent only has to land on the page; no login or destructive action
-  is required.
+  Visit http://info.cern.ch/ — the landing page commemorating the
+  world's first website. The agent should remain on the root path "/"
+  (do not follow any internal hyperlinks); this is a canary extraction
+  task.
 start_url: "http://info.cern.ch/"
 difficulty: easy
 tags:
   - easy
-  - navigate
+  - extract
   - public
+  - canary
+  - pattern:cern_home_extract
 verifier:
   kind: js
-  expression: "(/world wide web/i.test(document.body.innerText) || /first website/i.test(document.body.innerText))"
+  expression: "((document.location.pathname === '/' || /^\\/index\\.html?$/i.test(document.location.pathname)) && document.location.hash === '' && (/world wide web/i.test(document.body.innerText) || /first website/i.test(document.body.innerText) || /hypertext/i.test(document.body.innerText)))"
