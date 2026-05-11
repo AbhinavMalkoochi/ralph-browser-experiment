@@ -2546,3 +2546,145 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     the easiest way to trip silently into "every request shows up
     twice in the log", which then poisons the LLM's prompts.
 ---
+
+## 2026-05-11 - US-020
+- Shipped seventh novel agent: agents/dom-mutation-stream/.
+  Mechanism: a MutationObserver installed via BOTH
+  Page.addScriptToEvaluateOnNewDocument and Runtime.evaluate pushes
+  every childList/attribute/characterData mutation onto
+  window.__gba_dom_log with a strictly-monotonic seq. Each step the
+  LLM sees the mutation tail (most recent 24) alongside a minimal
+  aid-keyed interactive-element snapshot, then emits one of
+  {click(aid), type(aid, text, submit?), scroll(direction, pixels?),
+  wait(ms), await_change(timeout_ms), navigate(url), done, decline}.
+- After every state-changing action the harness calls settleAfter()
+  which BLOCKS in-page until the mutation log grows AND quiesces for
+  ≥75ms (cap 400ms) — the LLM only ever observes a settled
+  post-action state, not a mid-reaction view. The await_change
+  action is a first-class "block until the page moves" primitive
+  that no prior agent has — turn cadence is gated by the document,
+  not wall-clock.
+- Distinct on TWO axes from every prior slot:
+   * Observation modality: DOM mutation deltas (this) vs DOM/a11y
+     snapshots (baseline, plan-then-execute, runtime-codegen,
+     speculative-rollback, predicate-driven) vs pixels
+     (vision-grounded) vs network traffic (network-shadow).
+   * Cadence primitive: await_change blocks until a mutation arrives
+     (or quiesces after a state change); prior agents are all
+     wait(ms) wall-clock-only.
+  approach_keywords = [mutation_observer, dom_event_stream,
+  delta_observation, change_driven_loop, await_dom_change,
+  transition_aware]; Jaccard=0 with every prior agent (explicit
+  test in the test file).
+- Composition: reuses install pattern from network-shadow (add-on-
+  new-doc + current-doc eval + idempotency guard) and aid-keyed
+  action substrate from baseline (data-gba-stream-aid, distinct
+  attribute name so multiple agents in the same harness run don't
+  collide). The COMPOSITION is novel because the observation axis
+  (deltas, not states) and the cadence primitive (await_change)
+  together yield a mechanism no prior agent has — not "A+B" but a
+  new perception+action shape.
+- Files: agent.ts (Agent subclass + loop + buildMessages +
+  actionToRecord + safeSnapshot wrapper); actions.ts (action union
+  + tolerant parser with aliases for aid/target/target_aid/id,
+  hyphen alias for await-change, clamps for wait/await_change,
+  in-page CLICK_BY_AID + TYPE_BY_AID + scroll/wait/navigate
+  dispatch, isStateChanging predicate gates settle-after-action);
+  observer.ts (the MutationObserver install source as a string
+  template with FIFO cap LOG_LIMIT=200 + VALUE_LIMIT=40, read /
+  readCurrentSeq / clear / awaitChange / settleAfter helpers, plus
+  the page snapshot script and formatMutations/formatSnapshot/
+  digestSnapshot prompt helpers); manifest.yaml; README.md.
+- Tests: harness/ts/tests/dom_mutation_stream_agent.test.ts (37 new
+  — parseAction full coverage incl. all aid aliases, alias for
+  await-change, defaults, clamps, error paths; actionLabel; the
+  isStateChanging predicate; installObserver capturing childList +
+  attr + text mutations with monotonic seq on real Chrome;
+  idempotency double-install; readMutations(since) cursor
+  semantics; snapshotPage aid stability across two snapshots;
+  clearMutations behaviour; settleAfter blocks on a delayed
+  in-page mutation; awaitChange returns {changed:false} on timeout
+  and {changed:true} on early arrival; executeAction click/type+
+  submit/scroll/wait on real Chrome; end-to-end runs with scripted
+  LLM covering click+done DONE path with mutation_delta>=1
+  recorded, parse_error mid-loop recovery, no-LLM DECLINED,
+  tight-steps BUDGET_EXCEEDED; manifest distinctness vs ALL seven
+  prior agents). Total now: 426 TS tests + 7 Python tests passing.
+- Live results (gpt-4o-mini, temperature=0):
+   * Easy slice: **22/22 PASS in 176.4s**. The first full clear of
+     easy slice for a complete agent (prior slots peaked at 21/22).
+     httpbin-form passed cleanly with the agent typing into the
+     labeled fields by aid after seeing the form's added inputs in
+     the mutation stream.
+   * Hard slice: **2/10 PASS in 218.8s** — hard-modal-stack via
+     three clicks producing mutation_delta=7,1,5 on each FSM
+     advance, and hard-recoverable via the slice's natural retry
+     semantics. Above the ≥1/10 threshold.
+- Both AC thresholds met by margin (≥3/20 easy, ≥1/10 hard).
+- The 8 hard failures are substrate-bound or LLM-bound, not
+  observation-bound:
+   * canvas-drag / iframe-drag: canvas-internal redraws and
+     cross-origin iframe DOM are opaque to MutationObserver —
+     out of reach by construction.
+   * shadow-form: the form's shadow root content does emit
+     childList mutations but they target the shadow tree, not the
+     light DOM; the agent's snapshot doesn't surface
+     shadow-attached interactive elements (data-gba-stream-aid
+     can't be set inside a closed-or-opened shadow root without
+     traversing shadowRoot). Worth a follow-up: pierce shadow
+     roots in snapshotPage.
+   * conditional-form / late-hydration / virtual-scroll / pdf-task /
+     multi-tab: same substrate constraints prior agents hit —
+     PDF needs bytes, multi-tab needs cross-document CDP attach,
+     virtual-scroll needs a long-running scroll-and-click loop
+     the agent terminates before completing.
+- Trajectories at runs/dom-mutation-stream/{easy-*,hard-*}/0/
+  trajectory.jsonl.gz (32 files; runs/ is gitignored).
+- Files changed: agents/dom-mutation-stream/{agent,actions,
+  observer}.ts + agents/dom-mutation-stream/{manifest.yaml,README.md}
+  + harness/ts/tests/dom_mutation_stream_agent.test.ts +
+  agents/CLAUDE.md + prd.json + progress.txt.
+- Quality checks: `npm run typecheck` clean; `npm test` 426/426
+  (37 new); `uv run pytest -q` 7/7.
+- **Learnings for future iterations:**
+  - MutationObserver entries fire on a microtask, not synchronously
+    with the DOM operation that produced them. The settleAfter()
+    pattern (poll seq for change, then wait for quietMs of no
+    change) is the right way to know "page has finished reacting"
+    — a single wait(ms) is too brittle, and reading the log
+    immediately after a click misses the mutation that the click
+    just triggered.
+  - The CHARACTER of the mutation stream changes by fixture type:
+    modal-stack emits one or two `+ div` / `- div` per step
+    (clean FSM signal); recoverable emits attr flips on the
+    button's `disabled` (clean retry signal); virtual-scroll
+    emits *hundreds* of row +/- entries (noise). Capping the log
+    at 200 with FIFO drop is the right policy because the AGENT
+    is reading the tail anyway, but a future iteration could
+    add a coalesce pass (collapse N consecutive `+ tr` into
+    `+ tr ×N`) to compress the noisy case.
+  - Use a DISTINCT data-attribute name (data-gba-stream-aid here,
+    vs baseline's data-gba-aid) when an agent re-implements a
+    DOM-tagging convention. Sharing the attribute would mean
+    multi-agent runs collide, and tagging in different orders
+    would shift aids across agents.
+  - The `await_change` action's defaults are load-bearing: if the
+    LLM emits `{"type":"await_change","timeout_ms":0}` we promote
+    it to 1500ms rather than no-op. The LLM's intent is "I expect
+    a slow change, don't observe yet" — a 0ms await_change has
+    no good interpretation, so the parser DTRT.
+  - When recording action results into the trajectory, including
+    `mutation_delta` per step turned out to be the cleanest
+    debugging surface for "is the agent actually seeing the
+    change?" — modal-stack's Δmut=7,1,5,0 trace immediately
+    shows which step advanced the FSM and which clicked an
+    already-active button.
+  - The harness has no .env auto-loader — `make eval` runs under
+    process.env directly. To run a live eval, source .env first:
+    `set -a && . .env && set +a && make eval AGENT=... SLICE=...`.
+    Without it the agent will land in the "no LLM provider
+    configured" decline path on every task in under 1s. Worth
+    adding `--include` of dotenv to the eval CLI in a future
+    iteration.
+---
+

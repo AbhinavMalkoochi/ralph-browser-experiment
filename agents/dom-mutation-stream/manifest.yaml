@@ -1,0 +1,45 @@
+id: dom-mutation-stream
+language: typescript
+summary: |
+  Seventh novel agent (US-020). The agent's primary observation is the
+  STREAM OF DOM MUTATIONS since the previous action — not the current
+  page state. A MutationObserver is installed at run start (and on every
+  fresh document, via Page.addScriptToEvaluateOnNewDocument) and pushes
+  every childList / attribute / characterData mutation into
+  window.__gba_dom_log with a monotonic sequence number. Each step the
+  LLM sees a tail of recent mutations alongside a minimal aid-keyed
+  snapshot of currently visible interactive elements, then emits one of
+  six actions: click(aid) / type(aid,text,submit?) / scroll / wait /
+  await_change(timeout_ms) / navigate / done / decline. After every
+  state-changing action the harness BLOCKS in-page until the mutation
+  log grows (or a short cap fires), so the LLM only ever observes
+  AFTER the page has finished reacting — turn cadence is gated by the
+  page itself, not wall-clock.
+
+  Composition (not just A+B): borrows network-shadow's install-via-
+  addScriptToEvaluateOnNewDocument-plus-Runtime.evaluate pattern, but
+  for DOM mutations instead of HTTP requests; borrows baseline's
+  aid-keyed action substrate; introduces a unique action `await_change`
+  whose primitive is "wait until the page state actually moves". The
+  composed mechanism is qualitatively novel because the OBSERVATION
+  axis is DELTAS not STATES — no prior agent surfaces "what changed"
+  as the primary signal. This directly attacks fixtures whose verifier
+  hinges on a TRANSITION (conditional-form's field set changes,
+  late-hydration's button-rebind, modal-stack's FSM, recoverable's
+  banner-reappear, virtual-scroll's row visibility flips).
+
+approach_keywords:
+  - mutation_observer
+  - dom_event_stream
+  - delta_observation
+  - change_driven_loop
+  - await_dom_change
+  - transition_aware
+distinct_from:
+  - baseline-a11y-react
+  - plan-then-execute
+  - runtime-codegen
+  - speculative-rollback
+  - predicate-driven
+  - vision-grounded
+  - network-shadow

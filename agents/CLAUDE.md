@@ -126,6 +126,54 @@ trajectory.
   via the LLMClient cache. AGENT_ALIASES.baseline points here. Every
   novel agent (US-014..U-021) declares distinctness from this one.
 
+## STEERING (2026-05-10) — read before picking a new agent slot
+
+Two existing mechanisms are **deprioritized**. Keep their trajectories as
+data, but DO NOT clone or extend their core mechanism in any future agent
+slot — the user has explicitly steered away from them:
+
+- **vision-grounded** (0/10 hard). Pure pixel-coord vision without overlay
+  augmentation is a known structural failure of un-augmented chat models.
+  Successor is **US-031** (vision + Set-of-Marks). Do not ship another
+  raw-pixel-coordinate agent.
+- **speculative-rollback** (1/10 hard, 2× LLM cost per step). The
+  proposer/judge double-call inflates cost without expanding the capability
+  frontier. Successor is **US-032** (codegen × predicate-driven
+  composition: free-form action substrate + code-decided termination, one
+  LLM call per step). Do not ship another generic "did that help?" judge
+  loop.
+
+Also do NOT build:
+
+- Another raw-JS-bodied agent (runtime-codegen owns that substrate; new
+  agents must pick a different action primitive).
+- Another single-LLM single-shot planner whose only novelty is the prompt
+  template — the mechanism axis must move.
+
+Preferred directions for the remaining open agent slots
+(US-031/US-032/US-033/US-021):
+
+1. **DOM-as-filesystem** (US-033): tiny shell-style command vocabulary
+   compiled to `Runtime.evaluate`, persistent cwd selector chain,
+   shell-flavoured ls/cd/cat/grep/find + click/type. Distinct from
+   runtime-codegen (unbounded JS) AND from baseline (named JSON actions).
+2. **Set-of-Marks vision** (US-031): numbered DOM-derived overlays → LLM
+   picks integer mark id → harness translates to CDP click on the stable
+   element id behind the mark.
+3. **Composed mechanisms where the composition itself is the novelty**
+   (US-032 is the canonical example): runtime-codegen action × predicate
+   termination, network-shadow observation × baseline actions, vision-SoM
+   perception × runtime-codegen action.
+4. **Skill crystallisation / Voyager-for-the-web**: agent records
+   successful trajectories as named skills and retrieves them on similar
+   tasks. No agent has any persistent learning today.
+5. **Filesystem-as-working-memory**: real on-disk scratch
+   (notes.md / plan.md / observations/) survives across steps so context
+   doesn't grow linearly.
+
+The full directive lives in `prd.json` → `steeringNotes`. Re-read it each
+iteration before opening a new slot.
+
 ## Novel agents
 
 - `plan-then-execute/` — US-014, first novel slot. Batch planning
@@ -210,6 +258,36 @@ trajectory.
   load-bearing: a window-level `__gba_net_installed` flag
   short-circuits double-installs; without it, a second install
   wraps the wrapped fetch and logs every request twice.
+- `dom-mutation-stream/` — US-020, seventh novel slot. **Delta-first
+  observation.** A MutationObserver is installed via BOTH
+  Page.addScriptToEvaluateOnNewDocument and Runtime.evaluate; every
+  childList / attribute / characterData mutation lands on
+  window.__gba_dom_log with a strictly-monotonic `seq`. Each step
+  the LLM sees a tail of recent mutations (most recent 24) alongside
+  a minimal aid-keyed snapshot, then emits one of: click(aid),
+  type(aid, text, submit?), scroll(direction, pixels?), wait(ms),
+  await_change(timeout_ms), navigate(url), done(reason),
+  decline(reason). After every state-changing action the harness
+  calls settleAfter() which BLOCKS in-page until the mutation log
+  grows then quiesces (cap 400ms) — the LLM only ever observes a
+  SETTLED post-action state. The `await_change` action is a novel
+  primitive: a first-class "block until the page moves" timer the
+  LLM can dial up when it expects a slow reaction (hydration, network
+  round-trip, animation). **Distinct on TWO axes**: observation
+  modality (DOM deltas vs DOM/a11y states, network, pixels) AND
+  cadence primitive (document-driven `await_change` vs wall-clock
+  `wait`). approach_keywords = [mutation_observer, dom_event_stream,
+  delta_observation, change_driven_loop, await_dom_change,
+  transition_aware]; Jaccard=0 with every prior agent's keywords
+  (tested explicitly in the manifest distinctness test). Composition
+  reuses the install pattern from network-shadow and the aid-keyed
+  substrate from baseline — the COMPOSITION is novel because the
+  signal axis (deltas, not states) plus the cadence primitive
+  (await_change) together yield a mechanism no prior agent has.
+  Live eval (gpt-4o-mini, temperature=0): **22/22 easy** in 176.4s,
+  2/10 hard in 218.8s (modal-stack via clean FSM advance with
+  mutation_delta>0 on each step; recoverable via the cell-retry
+  semantics). Above both AC thresholds.
 - `predicate-driven/` — US-017, fourth novel slot. The LLM authors a
   JS PREDICATE upfront (one synthesis call); the agent loop polls the
   predicate in-page after every action and **terminates from CODE the
