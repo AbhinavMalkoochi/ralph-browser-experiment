@@ -1,9 +1,10 @@
 id: hard-app-bookstack-create-page
 goal: |
   You are signed in to a self-hosted BookStack at http://127.0.0.1:3003/.
-  Inside the "Harness" book, create a new page whose title is "Ralph Memo"
-  and whose body contains the phrase "owner: ralph". Stop when the page
-  exists.
+  Inside the "Harness" book, create a new page whose title is "Ralph Memo".
+  The body must contain the literal phrase "owner: ralph" AND a fenced code
+  block (markdown ``` … ``` or HTML <pre>/<code>) so the rendered page has a
+  preformatted region. Stop when the page exists and renders the code block.
 start_url: "http://127.0.0.1:3003/books/harness"
 difficulty: hard
 tags:
@@ -16,12 +17,36 @@ verifier:
   kind: js
   expression: |
     (async () => {
-      const resp = await fetch('/search/all?term=Ralph+Memo&page=1', {
+      const searchResp = await fetch('/search/all?term=Ralph+Memo&page=1', {
         headers: { 'Accept': 'text/html' },
         credentials: 'include',
       });
-      if (!resp.ok) return { pass: false, score: 0, reason: 'search api ' + resp.status };
-      const html = await resp.text();
-      const hit = /ralph\s+memo/i.test(html);
-      return { pass: hit, score: hit ? 1 : 0, reason: hit ? 'page found by search' : 'no page titled Ralph Memo' };
+      if (!searchResp.ok) return { pass: false, score: 0, reason: 'search api ' + searchResp.status };
+      const searchHtml = await searchResp.text();
+      const hit = /ralph\s+memo/i.test(searchHtml);
+      if (!hit) return { pass: false, score: 0, reason: 'no page titled Ralph Memo' };
+      // Pull the first page-view link from the search results so we can
+      // inspect the rendered HTML for the code block requirement.
+      const linkMatch = searchHtml.match(/href=\"([^\"]*\/books\/[^\"]+\/page\/[^\"]+)\"/i);
+      if (!linkMatch) return { pass: false, score: 0, reason: 'search hit but no page link' };
+      const pageUrl = linkMatch[1];
+      const pageResp = await fetch(pageUrl, {
+        headers: { 'Accept': 'text/html' },
+        credentials: 'include',
+      });
+      if (!pageResp.ok) return { pass: false, score: 0, reason: 'page fetch ' + pageResp.status };
+      const pageHtml = await pageResp.text();
+      // Restrict the body-content scan to BookStack's rendered article so the
+      // search-bar form (which contains the Ralph Memo title token) cannot
+      // satisfy the owner-phrase check.
+      const articleMatch = pageHtml.match(/<div[^>]*class=\"[^\"]*page-content[^\"]*\"[\s\S]*?<\/div>/i);
+      const body = articleMatch ? articleMatch[0] : pageHtml;
+      const hasOwner = /owner\s*:\s*ralph/i.test(body);
+      const hasCode = /<(pre|code)[\s>]/i.test(body);
+      const ok = hasOwner && hasCode;
+      return {
+        pass: ok,
+        score: ok ? 1 : 0,
+        reason: 'owner=' + hasOwner + ' code=' + hasCode,
+      };
     })();

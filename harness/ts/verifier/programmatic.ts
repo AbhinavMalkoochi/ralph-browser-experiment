@@ -120,10 +120,16 @@ function trajectorySnapshot(ctx: VerifyContext): TrajectorySnapshot {
  * The page expression may be either:
  *   - a bare expression (e.g. `window.foo === 1`)
  *   - a Promise-returning expression (e.g. `fetch('/x').then(r => r.json())`)
- * We wrap as `(async () => (EXPR))()` so awaitPromise picks it up uniformly.
+ *   - an IIFE that ends with a statement-terminating `;` (e.g. the multi-line
+ *     `(async () => { ... })();` block scalars hard-app/hard-real verifiers use)
+ * We wrap as `(async () => (EXPR))()` so awaitPromise picks it up uniformly,
+ * stripping any trailing statement terminator first — `(expr);` is not a
+ * valid expression in JS, so a naive concat would surface as
+ * `SyntaxError: Unexpected token ';'` from Runtime.evaluate.
  */
 function wrapForRuntimeEvaluate(expression: string): string {
-  return `(async () => (${expression}))()`;
+  const trimmed = expression.replace(/[\s;]+$/, "");
+  return `(async () => (${trimmed}))()`;
 }
 
 function normaliseReturn(kind: string, value: unknown): Verdict {

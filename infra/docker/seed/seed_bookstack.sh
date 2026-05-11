@@ -41,7 +41,7 @@ reset_admin_password() {
   docker exec gba-bookstack bash -lc '
     cd /app/www;
     php artisan tinker --execute="
-      use BookStack\\Auth\\User;
+      use BookStack\\Users\\Models\\User;
       \$u = User::firstOrCreate(
           [\"email\" => \"'"${USER_EMAIL}"'\"],
           [
@@ -52,7 +52,7 @@ reset_admin_password() {
       \$u->password = bcrypt(\"'"${USER_PASS}"'\");
       \$u->email_confirmed = true;
       \$u->save();
-      \$role = \\BookStack\\Auth\\Role::where(\"system_name\", \"admin\")->first();
+      \$role = \\BookStack\\Users\\Models\\Role::where(\"system_name\", \"admin\")->first();
       if (\$role) { \$u->attachRole(\$role); }
       echo \"agent_id=\" . \$u->id . PHP_EOL;
     "
@@ -68,7 +68,7 @@ seed_content() {
     docker exec gba-bookstack bash -lc '
       cd /app/www;
       php artisan tinker --execute="
-        \$u = \\BookStack\\Auth\\User::where(\"email\", \"'"${USER_EMAIL}"'\")->firstOrFail();
+        \$u = \\BookStack\\Users\\Models\\User::where(\"email\", \"'"${USER_EMAIL}"'\")->firstOrFail();
         \$t = new \\BookStack\\Api\\ApiToken();
         \$t->user_id = \$u->id;
         \$t->name = \"harness-seed-token\";

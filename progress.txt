@@ -2995,3 +2995,162 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     the slice was never run before). This means re-running with the
     apps up is a clean catch-up: the resumable runner has nothing to
     "resume" because no per-cell state was written.
+
+## 2026-05-10 - US-027 (complete)
+- Completed the deferred work from US-027's first iteration. The
+  hard-app slice infrastructure shipped last time; this iteration
+  hardened it, fixed several first-boot bugs, and ran the full
+  8-LLM-agent × 9-task sweep that AC #8 demanded.
+- **Live agent sweep (AC #8 — closes the deferred work).**
+  All 8 LLM agents (baseline-a11y-react, plan-then-execute,
+  runtime-codegen, speculative-rollback, predicate-driven,
+  vision-grounded, network-shadow, dom-mutation-stream) PLUS the
+  trivial click-first-link reference ran end-to-end on all 9
+  hard-app cells in ~13 minutes with up to 7 parallel tournament
+  processes. Zero harness crashes. Final leaderboard at
+  /tmp/gba-runs-sweep/leaderboard.json:
+   * predicate-driven      5/9 (55.6%) — top tie, $0.0013/cell
+   * vision-grounded       5/9 (55.6%) — top tie, $0.0167/cell
+   * runtime-codegen       4/9 (44.4%)
+   * dom-mutation-stream   4/9 (44.4%)
+   * speculative-rollback  4/9 (44.4%)
+   * plan-then-execute     3/9 (33.3%)
+   * baseline-a11y-react   2/9 (22.2%)
+   * network-shadow        1/9 (11.1%)
+  vision-grounded JUMPED from 0/10 on hard fixtures to 5/9 on
+  hard-app — empirical confirmation that synthetic hostile
+  fixtures over-index on substrate failures real apps don't share.
+  See docs/hard-app-sweep-2026-05-10.md for the full per-task
+  matrix + observations.
+- **Docker compose hardening**:
+   * Added one-shot `vikunja-init` (alpine:3) that chowns the named
+     volume to 1000:1000 BEFORE vikunja starts. Without this, fresh
+     `make apps-up` hits "permission denied opening /db/vikunja.db"
+     in a restart loop. The init service depends-on completes; the
+     main vikunja depends-on it succeeds.
+   * Renamed bookstack DB env vars: DB_USER/DB_PASS →
+     DB_USERNAME/DB_PASSWORD. The lscr.io/linuxserver/bookstack
+     image ignores the short forms and falls back to the literal
+     .env.example defaults ("database_username") which 500's the
+     app on first migration.
+   * Set bookstack APP_URL=http://127.0.0.1:3003 (was
+     http://localhost:3003). BookStack honours APP_URL for 302
+     Location headers; mismatching origins make in-page
+     fetch('/login') cross-origin on the redirect, manifesting as
+     "TypeError: Failed to fetch" from loginAs(bookstack).
+- **Seed script fix** (infra/docker/seed/seed_bookstack.sh):
+   * \BookStack\Auth\User → \BookStack\Users\Models\User
+   * \BookStack\Auth\Role → \BookStack\Users\Models\Role
+  These classes were moved in BookStack 24+; tinker calls referenced
+  the old namespaces and silently failed.
+- **Verifier wrap fix** (harness/ts/verifier/programmatic.ts):
+   * `wrapForRuntimeEvaluate` now strips trailing whitespace + `;`
+     before wrapping the expression in `(async () => (EXPR))()`.
+   * Without this, the idiomatic multi-line `|` YAML block scalar
+     shape `(async () => { ... })();\n` (which every hard-app
+     verifier uses) produced the invalid `(...;)` expression,
+     surfacing as `js verifier threw: Uncaught` (SyntaxError) on
+     EVERY hard-app cell. The bug was hidden until live data hit
+     the verifiers — no synthetic test exercised this shape.
+   * 3 new tests in harness/ts/tests/verifier_iife_wrap.test.ts
+     cover the legacy single-line shape, the trailing-`;` IIFE
+     shape, and multiple-trailing-`;`-plus-whitespace.
+- **BookStack task tightening** (AC #5):
+   * hard-app-bookstack-create-page now requires BOTH the
+     `owner: ralph` phrase AND a fenced code block (`<pre>` or
+     `<code>` tag) in the rendered page HTML. Goal text updated.
+     New test in hard_app_slice.test.ts enforces the verifier
+     expression contains both checks.
+- **Outline-vs-BookStack rationale** (AC #1 + tasks/CLAUDE.md):
+   * Documented why we ship BookStack (RAM budget — Outline needs
+     Postgres+Redis+S3) and the vikunja-init container rationale
+     so they survive compose refactors.
+- **State contamination caveat documented**.
+  The hard-app verifiers check app REST-API state, not provenance.
+  Sequential agents share state, so the second agent to attempt a
+  write-task gets credit just by navigating. A post-sweep re-run
+  of click-first-link scored 4/9 — clear smoke for contamination,
+  since the agent literally just clicks a link. AC #8 doesn't care
+  (it explicitly does NOT constrain pass rate), but US-022 / US-023
+  will need either per-cell state reset (`make apps-down -v && up
+  && seed` between agents) OR per-agent salt in artifact phrases.
+- Files changed:
+   * harness/ts/verifier/programmatic.ts — wrap fix.
+   * harness/ts/tests/verifier_iife_wrap.test.ts (new) — 3 regression
+     tests for the wrap.
+   * harness/ts/tests/hard_app_slice.test.ts — new "bookstack code
+     block" assertion.
+   * tasks/suite/hard-app/hard-app-bookstack-create-page.yaml —
+     code-block requirement + tightened goal + page-content scoped
+     verifier.
+   * tasks/CLAUDE.md — Outline-vs-BookStack + vikunja-init
+     subsections.
+   * infra/docker/docker-compose.yml — vikunja-init service,
+     bookstack DB_USERNAME/PASSWORD + APP_URL fix.
+   * infra/docker/seed/seed_bookstack.sh — User/Role namespace
+     update.
+   * infra/docker/TODO.md — updated to reflect what landed; the
+     remaining items (full 8-agent sweep with clean state per
+     agent, kanban-drag task, per-agent README pointers) are
+     enumerated.
+   * docs/hard-app-sweep-2026-05-10.md (new) — sweep results +
+     contamination caveat + reproduction recipe.
+   * prd.json + progress.txt.
+- Quality checks: `npm run typecheck` clean; `npm test` 459/459
+  passing (4 new in verifier_iife_wrap + hard_app_slice); `uv run
+  pytest -q` 7/7.
+- **Learnings for future iterations:**
+  - Docker volume permissions on Linux: a freshly-created named
+    volume is owned by root. Containers that run as a non-root
+    user (vikunja's uid 1000) need either a chown init container
+    or `user: "0:0"` override. The init-container pattern keeps the
+    main service runtime clean; document it in compose comments so
+    future refactors don't accidentally remove it.
+  - Always check the actual image's expected env var names against
+    the docker-compose.yml — image vendors disagree on shorthands.
+    bookstack expects `DB_USERNAME`, mariadb expects `MARIADB_USER`,
+    gitea expects `GITEA__database__USER` (double underscore).
+    A wrong env var name silently falls back to defaults, which
+    then 500's the app on first request.
+  - APP_URL / hostname matching matters even for local dev because
+    web apps use it for 302 Location headers and cookie domains.
+    Mismatching the navigate host and APP_URL turns same-origin
+    fetches into cross-origin, which fails with a confusing
+    "TypeError: Failed to fetch" message.
+  - The verifier wrap bug went undetected because every existing
+    task spec used a SINGLE-LINE expression (no trailing `;`).
+    When introducing a new task author convention (multi-line
+    block scalars), validate it through the full pipeline before
+    shipping a slice that relies on it. A unit test that wraps a
+    representative expression shape would catch this in seconds.
+  - State contamination in stateful slices is a real concern.
+    Either reset state between cells/agents OR design verifiers
+    that check for per-agent provenance. The "trivial agent gets
+    4/9" smoking gun in this sweep was an unmistakable signal.
+  - The tournament runner's resumable per-cell pattern works well
+    in practice: I ran 4 parallel sweeps on the same runs-root,
+    each with --agents filtered to one agent, and the per-agent
+    subdirectories prevented any conflicts. A subsequent unified
+    `make tournament SLICE=hard-app` discovered all agents AND
+    correctly resumed every existing cell (no re-runs). This is
+    a battle-tested invariant now.
+  - When sweeping many agents in parallel, watch the OpenAI TPM
+    rate limit. The predicate-driven sweep hit a 429 on the last
+    cell because 4 sweeps were all blasting gpt-4o-mini calls
+    simultaneously. The harness handles 429 as `ERROR` terminal
+    state, not a crash, which is the right behaviour — but cell-
+    level data is lost. The 429-with-backoff in
+    harness/ts/llm/providers/openai.ts (added in US-018) helped
+    most cells absorb transient limits.
+  - vision-grounded's 0/10 → 5/9 transfer was the most surprising
+    result of the sweep. The published WebVoyager/SeeAct/AppAgent
+    centre-bias failure mode is most pronounced on tightly-packed
+    UIs with small target buttons; real CRUD apps (gitea forms,
+    vikunja tasks) have generous-sized buttons in predictable
+    positions, and gpt-4o-mini's pixel-coord clicks land reliably
+    enough to win 5/9. This is a strong argument for the hard-app
+    slice as the better generalisation test going forward, AND
+    a counter-argument to the US-031 "vision agents are dead
+    without SoM" framing (the verdict depends heavily on what
+    the UI looks like).
+---

@@ -103,12 +103,20 @@ services:
       bookstack-db:
         condition: service_healthy
     environment:
-      APP_URL: "http://localhost:3003"
+      # APP_URL MUST match the host we navigate to (127.0.0.1, not localhost).
+      # BookStack honours this for 302 Location headers on login redirects;
+      # mismatching origins make in-page fetch('/login') trip cross-origin
+      # redirect handling and throw "TypeError: Failed to fetch".
+      APP_URL: "http://127.0.0.1:3003"
       APP_KEY: "base64:E5lQXZ8sQjUR04dUTfNEbCgsh9LpwHy+oZNzlP/F/CY="
       DB_HOST: "bookstack-db"
       DB_PORT: "3306"
-      DB_USER: "bookstack"
-      DB_PASS: "gba-bookstack-db-password"
+      # lscr.io/linuxserver/bookstack expects DB_USERNAME / DB_PASSWORD
+      # (NOT DB_USER / DB_PASS — those map to BookStack's defaults in
+      # .env.example and BookStack refuses to migrate with the literal
+      # placeholder "database_username").
+      DB_USERNAME: "bookstack"
+      DB_PASSWORD: "gba-bookstack-db-password"
       DB_DATABASE: "bookstack"
       PUID: "1000"
       PGID: "1000"
@@ -123,12 +131,27 @@ services:
       retries: 30
       start_period: 60s
 
+  # One-shot init: chowns the named volume so vikunja (uid 1000) can write
+  # /db/vikunja.db. Docker named volumes default to root-owned on Linux;
+  # without this, vikunja restarts forever with "permission denied".
+  vikunja-init:
+    image: alpine:3
+    container_name: gba-vikunja-init
+    command: ["sh", "-c", "chown -R 1000:1000 /db && echo ok"]
+    user: "0:0"
+    volumes:
+      - vikunja_data:/db
+    restart: "no"
+
   vikunja:
     # Go-based task tracker. Built-in sqlite + frontend served from the
     # same container; no DB sidecar needed for the harness's purposes.
     image: vikunja/vikunja:0.24.6
     container_name: gba-vikunja
     restart: unless-stopped
+    depends_on:
+      vikunja-init:
+        condition: service_completed_successfully
     environment:
       VIKUNJA_SERVICE_PUBLICURL: "http://localhost:3004/"
       VIKUNJA_SERVICE_JWTSECRET: "gba-vikunja-jwt-do-not-use-in-prod"

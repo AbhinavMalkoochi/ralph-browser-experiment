@@ -116,6 +116,28 @@ test("hard-app slice: verifier kind is programmatic (AC #4)", async () => {
   }
 });
 
+test("hard-app slice: bookstack-create-page verifier requires a code block (AC #5)", async () => {
+  // US-027 AC #5 specifies "create a doc with a heading and code block". The
+  // verifier MUST check for a <pre> or <code> tag in the rendered page
+  // content, not just the page's existence. Without this, the task degenerates
+  // to "create any page with the right title", which the agent passes by
+  // typing only the title.
+  const tasks = await hardAppTasks();
+  const t = tasks.find((x) => x.id === "hard-app-bookstack-create-page");
+  assert.ok(t, "missing hard-app-bookstack-create-page task");
+  const expr = t!.verifier.kind === "js" ? t!.verifier.expression : "";
+  assert.match(
+    expr,
+    /<\(?pre\|code/i,
+    "bookstack-create-page verifier must check for <pre> or <code> in the rendered page",
+  );
+  assert.match(
+    expr,
+    /owner\\s\*:\\s\*ralph/i,
+    "bookstack-create-page verifier must also check the owner-phrase invariant",
+  );
+});
+
 test("hard-app slice: at least one task per app (AC #5)", async () => {
   const byApp = new Map<HardAppId, number>();
   for (const t of await hardAppTasks()) {

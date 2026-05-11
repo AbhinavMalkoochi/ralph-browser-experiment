@@ -299,3 +299,30 @@ on machines without enough RAM / disk for the docker stack.
   with gpt-4o-mini and competent agents).
 - Wall clock: serially, ~5 min × 9 tasks × 7 agents ≈ 5 h. With
   the BrowserPool the resumable runner already supports, ~1.5–2 h.
+
+### Outline vs BookStack (AC #1 deviation)
+
+AC #1 lists "Outline or BookStack" as candidates for the Notion-like
+docs app. We ship BookStack, not Outline, because:
+
+- Outline requires Postgres + Redis + S3-compatible storage and SMTP
+  (or a magic-link bypass). That stack exceeds the AC #7 ~1.5 GB
+  RAM budget and adds two more containers on top of MariaDB.
+- BookStack runs on PHP + MariaDB and fits in ~400 MB. Single
+  container plus the shared `bookstack-db` MariaDB sidecar.
+- Both surface the same agent-facing primitive (book → page,
+  WYSIWYG editor with code blocks, REST API for verification).
+- The `app:bookstack` tag is the only place this choice is
+  exposed to tasks; swapping to Outline would mean changing the
+  loginAs adapter and the compose stack, but no task YAMLs.
+
+### Vikunja volume permissions (init container)
+
+`vikunja/vikunja:0.24.6` runs as uid 1000 and the named volume
+`vikunja_data` defaults to root-owned on first creation, so the
+service hits a permission-denied loop opening `/db/vikunja.db`.
+The compose ships a one-shot `vikunja-init` service (alpine:3 +
+`chown -R 1000:1000 /db`) that depends-on completes before
+`vikunja` starts. Do not delete the init service when refactoring
+the compose — fresh `make apps-down -v && make apps-up` will
+break without it.
