@@ -292,6 +292,31 @@ bracket per slice using snake seeding (1v4, 2v3 in round 1) and the same
 tiebreaker rules as the leaderboard sort. The bracket appears in the JSON
 under `slices.<slice>.bracket = {rounds, winner}`.
 
+## Self-hosted apps slice (US-027)
+
+The `hard-app` slice tests agents against four self-hosted SPAs (Gitea,
+Excalidraw, BookStack, Vikunja) booted via Docker Compose. Unlike the
+`hard-real` slice, the harness owns the infrastructure: an admin user is
+seeded, the agent user is pre-created, and `loginAs(session, app)` injects
+the session before `agent.run()` so the agent starts already logged in
+(it never sees the credentials).
+
+```bash
+make apps-up      # boot the four services (~60 s; pulls ~1 GB on first run)
+make apps-seed    # idempotent users + project + 10+ items per app
+make tournament SLICE=hard-app SEEDS=1
+make apps-down    # docker compose down -v (wipes volumes for fast reset)
+```
+
+Resource budget: ~860 MB RAM steady state (peaks ~1.5 GB during first
+BookStack migration), ~1.5 GB disk for images. Opt out with
+`SKIP_SELF_HOSTED=1` — the tournament runner SKIPS the slice cleanly
+with a clear log line. The same SKIP behaviour kicks in automatically
+when the apps aren't reachable (HTTP-only preflight, ~1.5 s budget).
+
+See `infra/docker/README.md` for the full hard-app contract and
+`tasks/CLAUDE.md` (section "Hard-app slice") for the task-author rules.
+
 ## Status
 
 Implementation lives behind the user stories in

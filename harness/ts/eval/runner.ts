@@ -22,6 +22,7 @@ import {
   startFixturesServer,
   type FixturesServer,
 } from "../../../tasks/fixtures/server.js";
+import { appFromTags, loginAs } from "../cdp/loginAs.js";
 
 /**
  * Built-in agent id aliases.
@@ -210,6 +211,13 @@ async function runOne(
   let score = 0;
   let reason = "";
   try {
+    // Pre-login for self-hosted-app tasks (US-027). The runner — not the
+    // agent — owns app credentials; tags drive the dispatch.
+    const app = appFromTags(task.tags);
+    if (app) {
+      await session.cdp.send("Network.enable");
+      await loginAs(session, app);
+    }
     await session.navigate(startUrl);
     const traj = await agent.run(task.goal, session, budget, {
       task_id: task.id,

@@ -1,0 +1,33 @@
+id: hard-app-vikunja-mark-done
+goal: |
+  You are signed in to a self-hosted Vikunja at http://127.0.0.1:3004/. The
+  "Harness" project has a seeded task titled "Pin Chrome version in CI". Mark
+  it as done. Stop when the task is in the done state.
+start_url: "http://127.0.0.1:3004/"
+difficulty: hard
+tags:
+  - hard
+  - app
+  - app:vikunja
+  - fill
+  - cross_page
+verifier:
+  kind: js
+  expression: |
+    (async () => {
+      const token = localStorage.getItem('token') || '';
+      if (!token) return { pass: false, score: 0, reason: 'no JWT in localStorage' };
+      const ph = { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' };
+      const ps = await fetch('/api/v1/projects', { headers: ph });
+      if (!ps.ok) return { pass: false, score: 0, reason: 'projects api ' + ps.status };
+      const projects = await ps.json();
+      const harness = Array.isArray(projects) ? projects.find((p) => /harness/i.test(p.title || '')) : null;
+      if (!harness) return { pass: false, score: 0, reason: 'no Harness project' };
+      const ts = await fetch('/api/v1/projects/' + harness.id + '/tasks', { headers: ph });
+      if (!ts.ok) return { pass: false, score: 0, reason: 'tasks api ' + ts.status };
+      const tasks = await ts.json();
+      const target = Array.isArray(tasks) ? tasks.find((t) => /pin\s+chrome\s+version/i.test(t.title || '')) : null;
+      if (!target) return { pass: false, score: 0, reason: 'no seeded task with that title' };
+      const ok = !!target.done;
+      return { pass: ok, score: ok ? 1 : 0, reason: ok ? 'task marked done' : 'task still open' };
+    })();

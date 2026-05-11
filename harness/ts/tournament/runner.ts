@@ -39,6 +39,8 @@ import {
 } from "./leaderboard.js";
 import { buildBracket } from "./bracket.js";
 import { hasSummary, readSummary, summaryPath, writeSummary } from "./summary.js";
+import { slicePreflight } from "./preflight.js";
+import { appFromTags, loginAs } from "../cdp/loginAs.js";
 import type {
   BracketResult,
   CellSummary,
@@ -99,6 +101,15 @@ export async function runTournament(opts: TournamentOptions): Promise<Tournament
   const bracketBySlice = new Map<string, BracketResult | null>();
 
   for (const slice of opts.slices) {
+    // Slice-level preflight (US-027): hard-app skips when the self-hosted
+    // apps aren't reachable. Any non-OK verdict aborts THIS slice without
+    // writing summary.json or running any cells; other slices continue.
+    const preflight = await slicePreflight(slice);
+    if (!preflight.ok) {
+      onProgress(`[tournament] SKIP slice=${slice}: ${preflight.reason}`);
+      summariesBySlice.set(slice, []);
+      continue;
+    }
     const tasksAll = opts.tasksBySlice?.get(slice) ?? (await loadSliceTasks(slice, repoRoot));
     const tasks = opts.taskFilter
       ? tasksAll.filter((t) => opts.taskFilter!.includes(t.id))
@@ -210,6 +221,15 @@ async function runCell(opts: RunCellOpts): Promise<CellSummary> {
   let reason = "";
   let declineReason: string | null = null;
   try {
+    // Pre-login (US-027): tasks tagged `app:<id>` are authenticated against
+    // the named self-hosted app before agent.run() so the agent starts in
+    // a logged-in browser state. The harness owns the credentials; the
+    // agent never sees them.
+    const app = appFromTags(task.tags);
+    if (app) {
+      await session.cdp.send("Network.enable");
+      await loginAs(session, app);
+    }
     await session.navigate(startUrl);
     if (agent.language === "typescript") {
       const cls = await loadTsAgentClass(agent.agentFile);

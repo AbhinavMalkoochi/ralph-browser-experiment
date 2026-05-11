@@ -1,0 +1,26 @@
+id: hard-app-excalidraw-rename-element
+goal: |
+  You are on a self-hosted Excalidraw at http://127.0.0.1:3002/. Add a text
+  element whose content is exactly "RALPH NODE" and place it anywhere on the
+  canvas. Stop when the text appears on the canvas (no auth, no saving — just
+  create the text element).
+start_url: "http://127.0.0.1:3002/"
+difficulty: hard
+tags:
+  - hard
+  - app
+  - app:excalidraw
+  - fill
+  - canvas
+verifier:
+  kind: js
+  expression: |
+    (() => {
+      const raw = localStorage.getItem('excalidraw') || '[]';
+      let arr = [];
+      try { arr = JSON.parse(raw); } catch (e) {}
+      if (!Array.isArray(arr)) return { pass: false, score: 0, reason: 'storage not an array' };
+      const texts = arr.filter((el) => el && !el.isDeleted && (el.type || '').toLowerCase() === 'text');
+      const hit = texts.some((t) => /ralph\s+node/i.test((t.text || t.originalText || '') + ''));
+      return { pass: hit, score: hit ? 1 : 0, reason: hit ? 'text element found' : 'no matching text element on canvas' };
+    })();

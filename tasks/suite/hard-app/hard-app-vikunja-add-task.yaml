@@ -1,0 +1,31 @@
+id: hard-app-vikunja-add-task
+goal: |
+  You are signed in to a self-hosted Vikunja at http://127.0.0.1:3004/.
+  Open the "Harness" project and add a new task titled "Ship release v0.3".
+  Stop when the task appears in the project's task list.
+start_url: "http://127.0.0.1:3004/"
+difficulty: hard
+tags:
+  - hard
+  - app
+  - app:vikunja
+  - fill
+  - cross_page
+verifier:
+  kind: js
+  expression: |
+    (async () => {
+      const token = localStorage.getItem('token') || '';
+      if (!token) return { pass: false, score: 0, reason: 'no JWT in localStorage' };
+      const ph = { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' };
+      const ps = await fetch('/api/v1/projects', { headers: ph });
+      if (!ps.ok) return { pass: false, score: 0, reason: 'projects api ' + ps.status };
+      const projects = await ps.json();
+      const harness = Array.isArray(projects) ? projects.find((p) => /harness/i.test(p.title || '')) : null;
+      if (!harness) return { pass: false, score: 0, reason: 'no Harness project' };
+      const ts = await fetch('/api/v1/projects/' + harness.id + '/tasks', { headers: ph });
+      if (!ts.ok) return { pass: false, score: 0, reason: 'tasks api ' + ts.status };
+      const tasks = await ts.json();
+      const hit = Array.isArray(tasks) && tasks.some((t) => /ship\s+release\s+v0\.?3/i.test(t.title || ''));
+      return { pass: !!hit, score: hit ? 1 : 0, reason: hit ? 'task exists' : 'task not found' };
+    })();

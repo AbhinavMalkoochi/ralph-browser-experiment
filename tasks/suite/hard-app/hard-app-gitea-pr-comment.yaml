@@ -1,0 +1,38 @@
+id: hard-app-gitea-pr-comment
+goal: |
+  You are signed in to a self-hosted Gitea at http://127.0.0.1:3001/. The
+  playground/harness repository has at least one open pull request. Open the
+  PR and post a review comment whose body contains the phrase "reviewed:
+  ralph". Stop when the comment is visible on the PR thread.
+start_url: "http://127.0.0.1:3001/playground/harness/pulls"
+difficulty: hard
+tags:
+  - hard
+  - app
+  - app:gitea
+  - extract
+  - cross_page
+verifier:
+  kind: js
+  expression: |
+    (async () => {
+      const list = await fetch('/api/v1/repos/playground/harness/pulls?state=open', {
+        headers: { 'Accept': 'application/json' },
+        credentials: 'include',
+      });
+      if (!list.ok) return { pass: false, score: 0, reason: 'pulls api ' + list.status };
+      const pulls = await list.json();
+      if (!Array.isArray(pulls) || pulls.length === 0) return { pass: false, score: 0, reason: 'no PRs in repo' };
+      for (const pr of pulls) {
+        const r = await fetch('/api/v1/repos/playground/harness/issues/' + pr.number + '/comments', {
+          headers: { 'Accept': 'application/json' },
+          credentials: 'include',
+        });
+        if (!r.ok) continue;
+        const cs = await r.json();
+        if (Array.isArray(cs) && cs.some((c) => /reviewed:\s*ralph/i.test(c.body || ''))) {
+          return { pass: true, score: 1, reason: 'review comment on PR #' + pr.number };
+        }
+      }
+      return { pass: false, score: 0, reason: 'no review comment with the required phrase' };
+    })();

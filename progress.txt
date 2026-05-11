@@ -563,6 +563,77 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   insensitive regex (real sites change copy). hard_real_slice.test.ts
   enforces both. Combine URL check with body-text check via && so a
   copy change OR a route rename can fall back to the other signal.
+- Hard-app slice (US-027) at tasks/suite/hard-app/ targets four
+  self-hosted SPAs booted via infra/docker/docker-compose.yml
+  (gitea:3001 / excalidraw:3002 / bookstack:3003 / vikunja:3004 —
+  all bound to 127.0.0.1). Tasks tag the target app via `app:<id>`;
+  the eval AND tournament runners both call appFromTags(task.tags)
+  to dispatch a loginAs(session, app) BEFORE session.navigate(startUrl)
+  so the agent starts logged in. The runner sends Network.enable
+  before loginAs because the basic CdpBrowserSession only enables
+  Page (the pooled session enables Network already, but the runner
+  uses the basic one). Verifiers are kind=js and hit the apps' REST
+  APIs via `fetch('/api/...', { credentials: 'include' })`; excalidraw
+  has no auth — its verifiers read localStorage.getItem('excalidraw').
+- Slice preflight pattern (US-027) at harness/ts/tournament/preflight.ts:
+  slicePreflight(slice) returns {ok:true} for any slice except
+  HARD_APP_SLICE_ID ('hard-app'). For hard-app it probes each app
+  with appIsReachable() (HTTP-only, 1.5s timeout per app); returns
+  {ok:false, reason, skipped_apps[]} when any app is unreachable
+  OR when SKIP_SELF_HOSTED=1 is in env. The tournament runner reads
+  the verdict before iterating cells and continues to the next slice
+  on failure (no summary.json writes, no crash). The eval runner
+  does NOT preflight by design — eval is for ad-hoc debug runs where
+  you might WANT to see the failure mode of running against a downed
+  app.
+- loginAs adapter authoring (US-027) at harness/ts/cdp/loginAs.ts:
+  each adapter does its login work as a single in-page fetch via
+  session.evaluate(). The auth state (cookie or localStorage) lands
+  in Chrome's storage and the subsequent navigate() inherits it. Two
+  patterns:
+   * gitea + bookstack: form-POST with CSRF token scraped from the
+     login page (meta[name="_csrf"] for gitea, input[name="_token"]
+     for bookstack). Success sniffed by checking resp.url no longer
+     contains '/login'.
+   * vikunja: POST /api/v1/login → JWT, then
+     localStorage.setItem('token', jwt). The SPA reads this key on
+     load.
+  Excalidraw is a no-op (no auth model). Adapter throws on failure
+  so the runner can surface a clean ERROR rather than running an
+  unauthenticated agent.
+- Credentials live in env vars GBA_<APP>_USER / GBA_<APP>_PASSWORD /
+  GBA_<APP>_PORT (per .env.example and infra/docker/.env.example).
+  credentialsFromEnv(app) is the central reader; defaults match the
+  seed scripts so a vanilla `make apps-up && make apps-seed` works
+  without any env override.
+- Seed scripts (infra/docker/seed/seed_{gitea,vikunja,bookstack}.sh)
+  are bash + curl + python3 (for JSON parsing — no jq dep). All are
+  idempotent: existing entities are detected and left alone. Gitea
+  uses the admin REST API for users + orgs + repos + issues + PRs;
+  Vikunja uses register-then-login-then-JWT-Bearer; BookStack uses
+  `docker exec gba-bookstack php artisan tinker` for admin setup
+  (no public REST endpoint for first-boot rekey) then issues an API
+  token for the content seed.
+- Docker compose name field 'gba-hardapp' scopes the stack; all
+  containers are named gba-<service> so they don't collide with
+  other projects on the same host. Volumes are named (gitea_data,
+  bookstack_db, etc.) so `apps-down -v` is the fast wipe-and-reset
+  path.
+- Excalidraw verifier pattern: drawings live in
+  localStorage.getItem('excalidraw') as a JSON array of element
+  objects with {type, isDeleted, text, ...}. Filter deleted, dedup
+  on .type, intersect against the wanted shape set. The
+  three-shapes task asserts {rectangle, ellipse, diamond} all
+  present; the text task asserts an undeleted text element whose
+  .text matches a regex. Verifier does NOT need any fetch — pure
+  localStorage read inside session.evaluate().
+- Skip semantics: when slicePreflight returns ok:false the
+  tournament runner sets summariesBySlice[slice] = [] and continues
+  to the next slice. This produces a leaderboard.json with the
+  slice present but with empty rows[]. Distinct from "the slice has
+  no tasks" which throws at loadSliceTasks. Tests assert the
+  skipped-shape via slicePreflight().verdict.shape NOT via the
+  end-to-end runner (it would need 4 mocked apps).
 ---
 
 ## 2026-05-08 - US-001
@@ -2813,3 +2884,114 @@ Started: Fri May  8 09:48:39 PM CDT 2026
       /(comments?|points?)/i.test(body)
     catches the common cases without depending on any one of them.
 ---
+
+## 2026-05-10 - US-027 (partial)
+- Shipped infrastructure for the hard-app slice: docker-compose with all
+  four target SPAs (gitea, excalidraw, bookstack+mariadb, vikunja),
+  REST-API seed scripts, loginAs helper, slice preflight, pre-login wiring
+  in BOTH eval and tournament runners, 9 task YAMLs across all four apps,
+  18 contract+unit tests, README + tasks/CLAUDE.md docs, and an
+  infra/docker/TODO.md tracking the deferred live agent sweep.
+- AC #8 ("All 7 existing agents run end-to-end against the slice")
+  deferred because (a) it requires booting four containers + pulling
+  ~1 GB of images + seeding + running 8 agents × 9 tasks ≈ 1.5-2 h with
+  BrowserPool, and (b) the infrastructure must be solid first.
+  Marked passes:false; the next iteration of US-027 will boot the apps
+  and finish the sweep using the docs in infra/docker/TODO.md.
+- Files changed:
+   * infra/docker/docker-compose.yml (new) — gitea/excalidraw/bookstack
+     +mariadb sidecar/vikunja; healthchecks; named volumes; 127.0.0.1-
+     bound ports 3001-3004; project name gba-hardapp.
+   * infra/docker/seed/seed_{gitea,vikunja,bookstack}.sh (new) —
+     idempotent. Gitea: REST API for users/orgs/repos + admin CLI for
+     admin bootstrap + 10+ issues + 1 PR with review comment. Vikunja:
+     register → login → JWT → project + 10 tasks (3 done). BookStack:
+     `docker exec ... php artisan tinker` to rekey admin (no public
+     first-boot REST endpoint), then API token + 1 book + 3 pages.
+   * infra/docker/{.env.example,README.md,TODO.md} (new) — credentials,
+     resource ballpark, opt-out via SKIP_SELF_HOSTED=1, deferred work list.
+   * harness/ts/cdp/loginAs.ts (new) — HardAppId union, DEFAULT_PORTS,
+     defaultOrigin, credentialsFromEnv, loginAs dispatcher,
+     appIsReachable HTTP probe, appFromTags(tags) helper.
+   * harness/ts/tournament/preflight.ts (new) — slicePreflight returns
+     {ok:true} for non-hard-app slices; for hard-app probes all four
+     apps and returns the verdict + skipped_apps list.
+   * harness/ts/tournament/runner.ts (modified) — slicePreflight before
+     each slice; SKIP and continue on ok:false. pre-login: Network.enable
+     then loginAs(session, app) when task.tags includes app:<id>.
+   * harness/ts/eval/runner.ts (modified) — same pre-login pattern (no
+     preflight in eval by design — eval is for debug).
+   * tasks/suite/hard-app/*.yaml (9 new) — 3 gitea (comment issue / new
+     issue / pr review comment), 2 excalidraw (three shapes / text
+     element), 2 bookstack (create page / find page), 2 vikunja (add task /
+     mark done). All kind=js verifiers that hit the apps' REST APIs (or
+     localStorage for excalidraw).
+   * harness/ts/tests/hard_app_slice.test.ts (new, 18 tests) — slice
+     contract + loginAs unit + preflight semantics.
+   * Makefile — apps-up/apps-seed/apps-down/apps-status targets;
+     apps-up polls all four ports until reachable, apps-down -v wipes
+     volumes for fast reset.
+   * tasks/CLAUDE.md — new "Hard-app slice" section + recipe.
+   * README.md — new "Self-hosted apps slice (US-027)" section.
+- Smoke (no apps booted): `SKIP_SELF_HOSTED=1 npx tsx
+  harness/ts/cli/tournament.ts --slice=hard-app --seeds=1
+  --agents=click-first-link` prints "[tournament] SKIP slice=hard-app:
+  SKIP_SELF_HOSTED=1; slice intentionally skipped" and writes
+  leaderboard.json with an empty hard-app slice. Same command without
+  SKIP_SELF_HOSTED prints "[tournament] SKIP slice=hard-app: apps not
+  reachable: gitea, excalidraw, bookstack, vikunja (see infra/docker/
+  README.md or run `make apps-up`)". `docker compose -f
+  infra/docker/docker-compose.yml config --quiet` validates the compose
+  syntax. bash -n on every seed script passes.
+- Quality checks: `npm run typecheck` clean; `npm test` 455/455 passing
+  (18 new); `uv run pytest -q` 7/7.
+- **Learnings for future iterations:**
+  - Adding a new slice to the harness is now a 2-line affair:
+    add the YAML files to tasks/suite/<slice>/, and optionally add an
+    entry to SLICE_RETRIES (harness/ts/eval/runner.ts). loadSliceTasks
+    reads any directory under tasks/suite/. The tournament runner has
+    been slice-agnostic since US-010; US-026 used this fact, US-027
+    also uses it. ALL future slices land the same way.
+  - Slice-level preflight is the right pattern for "this slice has
+    infrastructure preconditions". Don't try to encode preconditions
+    per-task (e.g. SKIPPED terminal state per cell) — it pollutes
+    leaderboards and makes the runner branchy. Preflight skips the
+    whole slice or runs it; the leaderboard either has data or
+    doesn't.
+  - Pre-login MUST happen before session.navigate(startUrl). The agent's
+    first observation is what the navigate produces, so the cookie /
+    JWT must already be in place. The CdpBrowserSession needs
+    Network.enable for cookies to roundtrip; the basic session class
+    only sends Page.enable at startup (PooledBrowserSession enables
+    Network too). The runner explicitly sends Network.enable before
+    loginAs.
+  - Form-POST login with CSRF: scrape the token from the login page
+    (meta[name="_csrf"] for Gitea, input[name="_token"] for BookStack)
+    via in-page Runtime.evaluate, then submit the form with
+    fetch(..., credentials:'include'). Set-Cookie headers from the
+    response land in Chrome's cookie jar automatically. Detection:
+    sniff resp.url for the login path; redirect-to-elsewhere means
+    success.
+  - JWT-in-localStorage login (vikunja): POST /api/v1/login,
+    localStorage.setItem('token', jwt). The SPA reads this on load.
+    Verifiers must read the same key — they cannot expect the cookie
+    jar to magically know about the JWT.
+  - Excalidraw's localStorage key is exactly 'excalidraw'. The value
+    is a JSON array of element objects each with {type, isDeleted,
+    text|originalText, ...}. Filter deleted, then verify the element
+    set; this is your test substrate for any canvas-based agent.
+  - Docker compose project name (top-level `name:` field) scopes the
+    stack; container names become gba-<service>. Useful because the
+    seed scripts `docker exec gba-bookstack ...` directly — no
+    project-name discovery needed.
+  - Seed scripts: prefer REST APIs over `docker exec` where possible
+    (REST works from anywhere; exec assumes a local Docker socket).
+    For first-boot setup that REST can't handle (e.g. BookStack admin
+    rekey), `php artisan tinker --execute=...` is the canonical
+    fallback. Keep the tinker source small and quote-careful — bash
+    string interpolation is the most fragile part of the seed.
+  - Skip semantics: a SKIPPED slice writes NO summary.json files. The
+    leaderboard's slice section has rows=[] (or is missing entirely if
+    the slice was never run before). This means re-running with the
+    apps up is a clean catch-up: the resumable runner has nothing to
+    "resume" because no per-cell state was written.

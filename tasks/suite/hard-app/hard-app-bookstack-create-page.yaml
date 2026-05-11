@@ -1,0 +1,27 @@
+id: hard-app-bookstack-create-page
+goal: |
+  You are signed in to a self-hosted BookStack at http://127.0.0.1:3003/.
+  Inside the "Harness" book, create a new page whose title is "Ralph Memo"
+  and whose body contains the phrase "owner: ralph". Stop when the page
+  exists.
+start_url: "http://127.0.0.1:3003/books/harness"
+difficulty: hard
+tags:
+  - hard
+  - app
+  - app:bookstack
+  - fill
+  - cross_page
+verifier:
+  kind: js
+  expression: |
+    (async () => {
+      const resp = await fetch('/search/all?term=Ralph+Memo&page=1', {
+        headers: { 'Accept': 'text/html' },
+        credentials: 'include',
+      });
+      if (!resp.ok) return { pass: false, score: 0, reason: 'search api ' + resp.status };
+      const html = await resp.text();
+      const hit = /ralph\s+memo/i.test(html);
+      return { pass: hit, score: hit ? 1 : 0, reason: hit ? 'page found by search' : 'no page titled Ralph Memo' };
+    })();

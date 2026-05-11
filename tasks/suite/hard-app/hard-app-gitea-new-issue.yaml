@@ -1,0 +1,27 @@
+id: hard-app-gitea-new-issue
+goal: |
+  You are signed in to a self-hosted Gitea at http://127.0.0.1:3001/. In the
+  repository playground/harness, open a new issue with title "Track flaky CI
+  step" and a body that mentions the phrase "owner: ralph". Stop when the
+  issue exists.
+start_url: "http://127.0.0.1:3001/playground/harness/issues/new"
+difficulty: hard
+tags:
+  - hard
+  - app
+  - app:gitea
+  - fill
+  - cross_page
+verifier:
+  kind: js
+  expression: |
+    (async () => {
+      const resp = await fetch('/api/v1/repos/playground/harness/issues?state=all&type=issues&limit=50', {
+        headers: { 'Accept': 'application/json' },
+        credentials: 'include',
+      });
+      if (!resp.ok) return { pass: false, score: 0, reason: 'api ' + resp.status };
+      const issues = await resp.json();
+      const hit = Array.isArray(issues) && issues.some((i) => /track\s+flaky\s+ci/i.test(i.title || '') && /owner:\s*ralph/i.test(i.body || ''));
+      return { pass: !!hit, score: hit ? 1 : 0, reason: hit ? 'matching issue exists' : 'no issue matched title + body' };
+    })();

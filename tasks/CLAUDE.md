@@ -227,3 +227,75 @@ Risks:
    `harness/ts/tests/hard_real_slice.test.ts` ONLY if you want to
    forbid it for some reason; otherwise the existing distinct-host
    check picks it up automatically.
+
+## Hard-app slice (`tasks/suite/hard-app/`, US-027)
+
+The hard-app slice is 8–10 tasks against four self-hosted SPAs
+(Gitea, Excalidraw, BookStack, Vikunja) booted via
+`infra/docker/docker-compose.yml`. Unlike hard-real, the harness
+owns the infrastructure: an admin user is seeded, the agent user is
+pre-created, and `loginAs(session, app)` injects the session before
+`agent.run()`. The point is to test multi-step write operations on
+complex SPAs without third-party-auth headaches.
+
+Author conventions:
+
+- `id: hard-app-<slug>` (every task id starts with `hard-app-`).
+- `difficulty: hard` so the harness applies the hard-tier `Budget`.
+- Tags MUST include `hard`, `app`, and `app:<id>` where `<id>` is
+  one of `gitea | excalidraw | bookstack | vikunja`. The tournament
+  runner reads the `app:<id>` tag to dispatch the right
+  `loginAs(...)` adapter before navigate.
+- Each task ALSO carries exactly one skill tag
+  `{search, navigate, extract, fill}`.
+- `start_url` MUST be `http://127.0.0.1:<port>/...` where `<port>`
+  matches the docker-compose host mapping (gitea=3001,
+  excalidraw=3002, bookstack=3003, vikunja=3004). The slice tests
+  enforce port↔app-tag consistency.
+- `verifier.kind` MUST be `js` or `trajectory_predicate`. No
+  `llm_judge` (we want cheap, deterministic signal).
+- Verifiers SHOULD query the app's REST API to confirm state. The
+  page origin in the browser IS the app's origin, so
+  `fetch('/api/...', { credentials: 'include' })` is the canonical
+  pattern. Verifier expressions handle JSON responses inside an
+  `(async () => { ... })()` IIFE.
+- Excalidraw has no auth — its verifiers read
+  `localStorage.getItem('excalidraw')` directly.
+
+### Preflight + opt-out
+
+`harness/ts/tournament/preflight.ts` probes the four apps before the
+slice runs. If any app is unreachable (or `SKIP_SELF_HOSTED=1` is
+set), the tournament runner SKIPS the slice with a clear log line
+and does NOT write summary.json files for it. The slice is opt-in
+on machines without enough RAM / disk for the docker stack.
+
+### Adding a new hard-app task
+
+1. Decide which app to target. If you need a 5th app, edit
+   `harness/ts/cdp/loginAs.ts` (HardAppId union, DEFAULT_PORTS,
+   loginXxx adapter), `infra/docker/docker-compose.yml`, and add a
+   seed script under `infra/docker/seed/`. The slice tests
+   automatically pick up new app ids that you add to the `HardAppId`
+   union.
+2. Decide the start_url: open the app's web UI and pick the page
+   the agent should land on after login. Use the host-mapped port.
+3. Write the verifier: prefer an API call to confirm state. Wrap
+   in `(async () => { ... })()`; return either a boolean or
+   `{ pass, score, reason }` (the runner accepts both).
+4. Tag with `hard`, `app`, `app:<id>`, plus one skill tag.
+5. `npm test -- harness/ts/tests/hard_app_slice.test.ts` — the
+   slice contract test validates port/tag consistency and skill
+   tag uniqueness on every YAML.
+
+### Resource / cost notes for hard-app
+
+- RAM: ~860 MB steady state with all four apps up (peaks ~1.5 GB
+  during first-boot BookStack migrations).
+- Disk: ~1.5 GB for the four images on first pull.
+- Cost: agents that use LLMs burn tokens on each cell.
+  Hard-tier budget is $3 / task, so a full 7-agent × 9-task sweep
+  is ≤ $189 worst-case (typically much less; ~$10–30 in practice
+  with gpt-4o-mini and competent agents).
+- Wall clock: serially, ~5 min × 9 tasks × 7 agents ≈ 5 h. With
+  the BrowserPool the resumable runner already supports, ~1.5–2 h.

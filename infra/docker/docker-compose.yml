@@ -1,0 +1,155 @@
+# Self-hosted complex web apps for the hard-app slice (US-027).
+#
+# Four apps spanning four representative SPA categories:
+#   - gitea       : GitHub-like — issues, PRs, repo browsing      (port 3001)
+#   - excalidraw  : canvas/whiteboard (no auth — state in browser) (port 3002)
+#   - bookstack   : Notion-like docs (Outline replacement — Outline
+#                   requires Postgres+Redis+S3 which is heavier than the
+#                   AC's "1.5 GB RAM total" budget allows; BookStack is the
+#                   AC-listed alternative and fits in ~400 MB)            (port 3003)
+#   - vikunja     : Linear/Asana-like task tracker                 (port 3004)
+#
+# Resource ballpark (steady state, headless): gitea ~150MB, excalidraw ~30MB,
+# bookstack+mariadb ~600MB, vikunja ~80MB. Total ~900MB. RAM peaks during
+# first-run migrations.
+#
+# Opt out: set SKIP_SELF_HOSTED=1 in the env to make `make tournament
+# SLICE=hard-app` short-circuit without trying to reach the apps.
+#
+# Lifecycle:
+#   make apps-up   # docker compose up -d
+#   make apps-seed # idempotent seed of users/projects/issues/cards/etc.
+#   make apps-down # docker compose down -v (NOTE: -v wipes volumes — fast reset)
+
+name: gba-hardapp
+
+services:
+  gitea:
+    # Single-binary Go service. Built-in sqlite is sufficient for our
+    # seeded data; no postgres sidecar needed.
+    image: gitea/gitea:1.22.4-rootless
+    container_name: gba-gitea
+    restart: unless-stopped
+    environment:
+      # Disable installer page on first boot; we want apps-seed to work
+      # against a fully-configured instance.
+      GITEA__server__ROOT_URL: "http://localhost:3001/"
+      GITEA__server__HTTP_PORT: "3000"
+      GITEA__server__DOMAIN: "localhost"
+      GITEA__database__DB_TYPE: "sqlite3"
+      GITEA__database__PATH: "/var/lib/gitea/data/gitea.db"
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__security__INTERNAL_TOKEN: "gba-internal-token-do-not-use-in-prod"
+      GITEA__service__DISABLE_REGISTRATION: "false"
+      GITEA__service__REQUIRE_SIGNIN_VIEW: "false"
+      GITEA__log__LEVEL: "Warn"
+      GITEA__openid__ENABLE_OPENID_SIGNIN: "false"
+      GITEA__openid__ENABLE_OPENID_SIGNUP: "false"
+      USER_UID: "1000"
+      USER_GID: "1000"
+    ports:
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - gitea_data:/var/lib/gitea
+      - gitea_config:/etc/gitea
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/healthz | grep -q pass || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  excalidraw:
+    # Static React frontend. No auth — drawings live in the browser's
+    # localStorage (key "excalidraw"). Verifiers read that key directly via
+    # Runtime.evaluate; no API call needed.
+    image: excalidraw/excalidraw:latest
+    container_name: gba-excalidraw
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3002:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ | head -1 | grep -q '<!' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  bookstack-db:
+    # MariaDB for BookStack. Embedded in the compose for hermeticity.
+    image: mariadb:11
+    container_name: gba-bookstack-db
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: "gba-bookstack-root"
+      MARIADB_DATABASE: "bookstack"
+      MARIADB_USER: "bookstack"
+      MARIADB_PASSWORD: "gba-bookstack-db-password"
+    volumes:
+      - bookstack_db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+  bookstack:
+    # Notion-like docs system. Slim PHP image.
+    image: lscr.io/linuxserver/bookstack:latest
+    container_name: gba-bookstack
+    restart: unless-stopped
+    depends_on:
+      bookstack-db:
+        condition: service_healthy
+    environment:
+      APP_URL: "http://localhost:3003"
+      APP_KEY: "base64:E5lQXZ8sQjUR04dUTfNEbCgsh9LpwHy+oZNzlP/F/CY="
+      DB_HOST: "bookstack-db"
+      DB_PORT: "3306"
+      DB_USER: "bookstack"
+      DB_PASS: "gba-bookstack-db-password"
+      DB_DATABASE: "bookstack"
+      PUID: "1000"
+      PGID: "1000"
+    ports:
+      - "127.0.0.1:3003:80"
+    volumes:
+      - bookstack_data:/config
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:80/login | head -1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  vikunja:
+    # Go-based task tracker. Built-in sqlite + frontend served from the
+    # same container; no DB sidecar needed for the harness's purposes.
+    image: vikunja/vikunja:0.24.6
+    container_name: gba-vikunja
+    restart: unless-stopped
+    environment:
+      VIKUNJA_SERVICE_PUBLICURL: "http://localhost:3004/"
+      VIKUNJA_SERVICE_JWTSECRET: "gba-vikunja-jwt-do-not-use-in-prod"
+      VIKUNJA_DATABASE_TYPE: "sqlite"
+      VIKUNJA_DATABASE_PATH: "/db/vikunja.db"
+      VIKUNJA_LOG_LEVEL: "ERROR"
+      VIKUNJA_SERVICE_ENABLEREGISTRATION: "true"
+    ports:
+      - "127.0.0.1:3004:3456"
+    volumes:
+      - vikunja_data:/db
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3456/api/v1/info | head -c 1 | grep -q . || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  gitea_data:
+  gitea_config:
+  bookstack_db:
+  bookstack_data:
+  vikunja_data:

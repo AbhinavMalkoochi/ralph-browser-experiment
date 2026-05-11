@@ -1,0 +1,27 @@
+id: hard-app-excalidraw-three-shapes
+goal: |
+  You are on a self-hosted Excalidraw at http://127.0.0.1:3002/. Add three
+  distinct shapes to the canvas: one rectangle, one ellipse, and one diamond.
+  The shapes can be anywhere on the canvas. Stop when all three appear on the
+  canvas (no auth, no saving — just create the shapes).
+start_url: "http://127.0.0.1:3002/"
+difficulty: hard
+tags:
+  - hard
+  - app
+  - app:excalidraw
+  - fill
+  - canvas
+verifier:
+  kind: js
+  expression: |
+    (() => {
+      const raw = localStorage.getItem('excalidraw') || '[]';
+      let arr = [];
+      try { arr = JSON.parse(raw); } catch (e) {}
+      if (!Array.isArray(arr)) return { pass: false, score: 0, reason: 'storage not an array' };
+      const types = new Set(arr.filter((el) => el && !el.isDeleted).map((el) => (el.type || '').toLowerCase()));
+      const want = ['rectangle', 'ellipse', 'diamond'];
+      const hit = want.filter((w) => types.has(w));
+      return { pass: hit.length === 3, score: hit.length / 3, reason: 'distinct shape types present: ' + Array.from(types).join(',') };
+    })();

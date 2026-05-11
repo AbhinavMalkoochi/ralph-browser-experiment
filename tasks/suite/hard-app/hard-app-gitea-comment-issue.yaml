@@ -1,0 +1,27 @@
+id: hard-app-gitea-comment-issue
+goal: |
+  You are already signed in to a self-hosted Gitea at http://127.0.0.1:3001/.
+  Open the repository playground/harness, find issue #1, and post a comment on
+  it whose body contains the phrase "ack: ralph". Stop when the comment is
+  visible on the issue page.
+start_url: "http://127.0.0.1:3001/playground/harness/issues/1"
+difficulty: hard
+tags:
+  - hard
+  - app
+  - app:gitea
+  - fill
+  - cross_page
+verifier:
+  kind: js
+  expression: |
+    (async () => {
+      const resp = await fetch('/api/v1/repos/playground/harness/issues/1/comments', {
+        headers: { 'Accept': 'application/json' },
+        credentials: 'include',
+      });
+      if (!resp.ok) return { pass: false, score: 0, reason: 'api ' + resp.status };
+      const comments = await resp.json();
+      const hit = Array.isArray(comments) && comments.some((c) => /ack:\s*ralph/i.test(c.body || ''));
+      return { pass: !!hit, score: hit ? 1 : 0, reason: hit ? 'comment found' : 'no comment with the required phrase' };
+    })();
