@@ -1,0 +1,15 @@
+id: hard-real-npm-lodash
+goal: |
+  Open the npm registry home page at https://www.npmjs.com/ and use the
+  on-site search to find the package named "lodash". Open its package
+  page. The destination URL begins with /package/lodash.
+start_url: "https://www.npmjs.com/"
+difficulty: hard
+tags:
+  - hard
+  - real_site
+  - search
+  - cross_page
+verifier:
+  kind: js
+  expression: "/^\\/package\\/lodash/i.test(document.location.pathname) && /lodash/i.test(document.body.innerText)"

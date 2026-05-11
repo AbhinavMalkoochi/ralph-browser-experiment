@@ -1,0 +1,16 @@
+id: hard-real-caniuse-flexbox
+goal: |
+  Open the caniuse home page at https://caniuse.com/ and find the
+  compatibility page for the "Flexible Box Layout" (flexbox) feature.
+  You may search for it or follow links into the features list. The
+  destination URL contains "flexbox" in the pathname or hash.
+start_url: "https://caniuse.com/"
+difficulty: hard
+tags:
+  - hard
+  - real_site
+  - search
+  - cross_page
+verifier:
+  kind: js
+  expression: "(/flexbox/i.test(document.location.pathname) || /flexbox/i.test(document.location.hash)) && /(flexible\\s+box|flexbox)/i.test(document.body.innerText)"

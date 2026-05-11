@@ -1,0 +1,16 @@
+id: hard-real-android-view-class
+goal: |
+  Open the Android reference index at https://developer.android.com/reference
+  and navigate to the API reference page for the android.view.View class.
+  The destination URL contains /reference/android/view/View. You may use
+  the search box or follow links through the package hierarchy.
+start_url: "https://developer.android.com/reference"
+difficulty: hard
+tags:
+  - hard
+  - real_site
+  - navigate
+  - cross_page
+verifier:
+  kind: js
+  expression: "/\\/reference\\/android\\/view\\/View(\\b|$|\\.|\\/)/i.test(document.location.pathname) && /(class\\s+view|view\\s+class|implements|extends)/i.test(document.body.innerText)"

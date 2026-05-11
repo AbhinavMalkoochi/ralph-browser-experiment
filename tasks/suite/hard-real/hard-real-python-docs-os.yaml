@@ -1,0 +1,16 @@
+id: hard-real-python-docs-os
+goal: |
+  Open the Python 3 documentation index at https://docs.python.org/3/ and
+  navigate to the reference page for the "os" standard-library module.
+  The destination URL ends with /library/os.html. You may use the index,
+  the search field, or any in-site link.
+start_url: "https://docs.python.org/3/"
+difficulty: hard
+tags:
+  - hard
+  - real_site
+  - navigate
+  - cross_page
+verifier:
+  kind: js
+  expression: "/\\/library\\/os\\.html$/i.test(document.location.pathname) && /(miscellaneous operating system|os\\.path|posix)/i.test(document.body.innerText)"

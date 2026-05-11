@@ -1,0 +1,16 @@
+id: hard-real-gitlab-org-repo
+goal: |
+  Open the public GitLab project at https://gitlab.com/gitlab-org/gitlab
+  and navigate to its issues list. You may use the project's left
+  navigation or the Issues link. The destination URL ends with
+  /gitlab-org/gitlab/-/issues. No login is required.
+start_url: "https://gitlab.com/gitlab-org/gitlab"
+difficulty: hard
+tags:
+  - hard
+  - real_site
+  - navigate
+  - cross_page
+verifier:
+  kind: js
+  expression: "/\\/gitlab-org\\/gitlab\\/-\\/issues/i.test(document.location.pathname) && /issue/i.test(document.body.innerText)"

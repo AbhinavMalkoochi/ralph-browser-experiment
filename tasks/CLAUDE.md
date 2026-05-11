@@ -142,3 +142,88 @@ agent wired up correctly?" smoke. Author conventions:
 The validator at `harness/ts/tests/easy_slice.test.ts` enforces all of the
 above; adding a new easy task usually means dropping a YAML in this
 directory — the test picks it up automatically.
+
+## Hard-real slice (`tasks/suite/hard-real/`, US-026)
+
+The hard-real slice is 8–10 tasks against REAL public websites with
+non-trivial DOM/JS complexity, no auth required. Counterpart to the
+local `hard/` fixtures: same difficulty tier, same budget (600s wall,
+80 steps), but the agent is tested on transfer from synthetic to real.
+
+Author conventions:
+
+- `id: hard-real-<slug>` (every task id starts with `hard-real-`).
+- `difficulty: hard` so the harness applies the hard-tier `Budget`.
+- Tags MUST include `hard`, `real_site`, and exactly ONE of
+  `{search, navigate, extract, fill}`. Tasks that traverse multiple
+  pages (the common case) also add `cross_page`.
+- `start_url` MUST be `https://`. No `fixtures://`, no `http://`, no
+  pages requiring auth or destructive writes.
+- Each task hostname MUST be distinct from every other task's hostname
+  in this slice AND from every easy-slice hostname (i.e. no
+  example.com, wikipedia, iana, info.cern.ch, rfc-editor, arxiv,
+  developer.mozilla.org, httpbin, github.com — those are easy-slice
+  hosts). The slice's purpose is breadth across hosts.
+- Each task requires `>=3 in-page interactions OR cross-page
+  navigation`. Single-page extractions on the start_url's body are
+  NOT allowed — the verifier MUST check that the page state changed
+  past what loading the start URL alone produces. The simplest pattern:
+  put the answer-bearing content on a different URL and have the
+  verifier match `document.location.pathname` against a regex that
+  excludes the start_url's path.
+- `verifier.kind` MUST be `js` or `trajectory_predicate`. No
+  `llm_judge` (programmatic only; we want cheap, deterministic
+  signal). The verifier expression should:
+  - Use case-insensitive regexes (`/.../i`) — sites change copy.
+  - Combine a URL check with a text check (`pathname match && body
+    text match`) to be robust to either a copy change or a route
+    rename (one will still fire).
+  - Allow alternatives with `||` where reasonable (e.g. the hash
+    OR the pathname for hash-routed sites like caniuse).
+  - NEVER `fetch('/__path')` — the page origin is the live site, not
+    our fixtures server; cross-origin fetches will fail or be CORS-
+    blocked.
+- Real sites are flaky (DNS, TLS handshake jitter, transient 5xx,
+  rate limits, Cloudflare interstitial). `SLICE_RETRIES["hard-real"]`
+  defaults to `2` so a transient failure does not poison the
+  leaderboard. Override at the CLI with `--retries=N`.
+
+### Rate-limit and network-flake risk
+
+The slice hits public infra we do not own. Each cell makes one or
+more HTTPS requests per attempt, plus whatever the agent emits.
+Risks:
+
+- **Rate limits / bot interstitials**: Cloudflare, HF, npm, and
+  others can return 4xx/5xx or a JS challenge when they detect
+  headless Chrome. We do NOT spoof UA or solve challenges; failures
+  here are recorded as ordinary FAIL with `terminal_state` reflecting
+  what the agent reached. If a host is consistently inaccessible from
+  the test machine, drop the YAML rather than retrying forever.
+- **Network flake**: DNS/TLS jitter accounts for most failures on a
+  healthy network. The slice's per-slice retry default of `2`
+  absorbs single-attempt blips. Don't crank retries higher — past 2
+  retries you are mostly burning wall time on a host that is
+  systemically failing for you.
+- **Site drift**: if a site renames a route or changes copy, the
+  verifier may stop matching. Prefer URL-pattern checks over copy
+  checks where possible. Re-author tasks rather than skipping them
+  long-term.
+- **Cost**: agents that use LLMs (the seven novel agents) will burn
+  tokens on each cell. With 9 tasks × 1 seed × ~5–15 LLM calls per
+  task at ~$0.01–0.05 per call, a full hard-real sweep across 7
+  agents is on the order of $5–20 in tokens. Budget enforced by
+  the hard-tier `Budget` (USD cap = $3 per task).
+
+### Adding a new hard-real task
+
+1. Pick a public host NOT already used by any easy or hard-real task.
+2. Pick a destination URL (the "answer page") that is several clicks
+   or one cross-page navigation away from a sensible start URL.
+3. Write the YAML with the conventions above. Goal text should
+   describe the destination URL pattern so the verifier and the
+   prompt agree on success.
+4. Add the host to `HARD_REAL_FORBIDDEN_HOSTS` in
+   `harness/ts/tests/hard_real_slice.test.ts` ONLY if you want to
+   forbid it for some reason; otherwise the existing distinct-host
+   check picks it up automatically.

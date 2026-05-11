@@ -1,0 +1,15 @@
+id: hard-real-pypi-requests
+goal: |
+  Open the Python Package Index home page at https://pypi.org/ and use
+  the on-site search to find the package named "requests". Open the
+  project's page. The destination URL begins with /project/requests/.
+start_url: "https://pypi.org/"
+difficulty: hard
+tags:
+  - hard
+  - real_site
+  - search
+  - cross_page
+verifier:
+  kind: js
+  expression: "/^\\/project\\/requests\\/?/i.test(document.location.pathname) && /(python|http|library)/i.test(document.body.innerText)"

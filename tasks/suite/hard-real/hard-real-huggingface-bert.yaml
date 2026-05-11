@@ -1,0 +1,16 @@
+id: hard-real-huggingface-bert
+goal: |
+  Open the Hugging Face models index at https://huggingface.co/models and
+  open the model card for "bert-base-uncased". You may either use the
+  search box or navigate directly to the model's URL. The destination URL
+  ends with /bert-base-uncased.
+start_url: "https://huggingface.co/models"
+difficulty: hard
+tags:
+  - hard
+  - real_site
+  - search
+  - cross_page
+verifier:
+  kind: js
+  expression: "/\\/bert-base-uncased\\/?$/i.test(document.location.pathname) && /bert/i.test(document.body.innerText)"

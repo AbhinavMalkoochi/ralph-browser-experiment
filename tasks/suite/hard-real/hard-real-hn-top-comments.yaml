@@ -1,0 +1,16 @@
+id: hard-real-hn-top-comments
+goal: |
+  Start on the Hacker News front page (https://news.ycombinator.com/) and
+  open the discussion thread for the currently top-ranked story (the first
+  story in the front-page list). The comments-thread page has a URL of the
+  shape /item?id=NNNNNNNN. Stop on the comments page. Do not log in.
+start_url: "https://news.ycombinator.com/"
+difficulty: hard
+tags:
+  - hard
+  - real_site
+  - navigate
+  - cross_page
+verifier:
+  kind: js
+  expression: "/^\\/item$/.test(document.location.pathname) && /[?&]id=\\d+/.test(document.location.search) && /(comments?|points?)/i.test(document.body.innerText)"

@@ -547,6 +547,22 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   for the ride. Future "skill library" or "memory" agents could
   cache the request shape per (host, goal-template) for replay
   across tasks — that's beyond US-019 but a natural extension.
+- Hard-real slice (US-026) at tasks/suite/hard-real/*.yaml (9 tasks).
+  The runner accepts ANY slice name out of the box: loadSliceTasks(slice,
+  repoRoot) just reads tasks/suite/<slice>/, and DIFFICULTY_BUDGETS
+  falls back by `difficulty` (hard tier here = 600s wall, 80 steps,
+  $3, 600k tokens). SLICE_RETRIES gained a "hard-real" → 2 entry so
+  live-site flakes get up to 3 attempts (same policy as easy).
+  Adding a new real-site task = drop a YAML under tasks/suite/hard-real/
+  (no code change needed). Conventions are documented in tasks/CLAUDE.md
+  under "Hard-real slice" and validated by hard_real_slice.test.ts.
+- Hard-real verifiers cannot fetch('/__feature/last') (page origin =
+  live site). Use document.location.pathname / .hash / document.body.
+  innerText / document.title with /.../i regex matchers. Each verifier
+  MUST hit document.location (proves cross-page nav) AND use a case-
+  insensitive regex (real sites change copy). hard_real_slice.test.ts
+  enforces both. Combine URL check with body-text check via && so a
+  copy change OR a route rename can fall back to the other signal.
 ---
 
 ## 2026-05-08 - US-001
@@ -2688,3 +2704,112 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     iteration.
 ---
 
+
+## 2026-05-11 - US-026
+- Shipped the hard-real slice: 9 task specs at tasks/suite/hard-real/
+  hitting 9 distinct public hosts not used by the easy slice
+  (news.ycombinator.com, stackoverflow.com, pypi.org, huggingface.co,
+  www.npmjs.com, gitlab.com, docs.python.org, developer.android.com,
+  caniuse.com). Each task asks the agent to do cross-page navigation
+  from a sensible start URL to a destination URL with a different
+  pathname — the verifier checks document.location.pathname (and a
+  body-text fallback) so single-page extractions on the start_url's
+  initial body cannot pass.
+- All 9 tasks are difficulty=hard so the harness applies the hard-tier
+  Budget (600s, 80 steps, $3, 600k tokens) via DIFFICULTY_BUDGETS
+  without any code change. All 9 verifiers are kind=js with /.../i
+  regex matchers per the AC #5 regex-tolerant rule. The tournament
+  runner needed no changes either — loadSliceTasks/discoverAgents
+  accept any slice name as long as tasks/suite/<slice>/ exists.
+- harness/ts/eval/runner.ts: SLICE_RETRIES gained
+  "hard-real" → 2 (same as easy) so live-site flakes get up to 3
+  attempts before recording a failure. defaultRetriesForSlice already
+  reads from this table; the tournament runner uses it via
+  opts.retries ?? defaultRetriesForSlice(slice).
+- tasks/CLAUDE.md gained a new "Hard-real slice" section documenting
+  the author conventions (id prefix, difficulty=hard, https-only,
+  hostname must be distinct from easy slice AND from other hard-real
+  tasks, programmatic verifier, regex-tolerant /.../i, no fetch of
+  fixtures-style endpoints) AND a "Rate-limit and network-flake risk"
+  subsection on Cloudflare interstitials, network jitter, site drift,
+  and the ~$5–20 cost of a full 7-agent sweep.
+- Tests: 11 new in harness/ts/tests/hard_real_slice.test.ts validating
+  the slice contract — 8..10 tasks, unique hard-real- prefixed ids,
+  difficulty=hard, hard + real_site + exactly-one-skill tag set,
+  https://, no fixtures://, programmatic verifier (no llm_judge),
+  hostnames distinct from each other AND from every easy-slice host,
+  verifier expression checks document.location AND uses /.../i,
+  SLICE_RETRIES wired to 2, and goal text references a URL pattern.
+  All 11 pass. Total: 437 TS tests + 7 Python tests passing
+  (11 new, 426 → 437).
+- Smoke verifications (no code change needed):
+   * `eval --agent=trivial --slice=hard-real --seeds=1 --retries=0`
+     runs all 9 tasks in 10.8s; 0/9 PASS (7 DONE, 2 DECLINED). Proves
+     the slice has signal — a "navigate to start_url + click first
+     link" agent fails every task because every verifier checks the
+     destination URL is different from start_url.
+   * `tournament --slice=hard-real --agents=click-first-link
+     --seeds=1` writes runs/leaderboard.json with a hard-real slice
+     row + summary.json sidecars per cell (attempts=3 because the
+     2-retry default applied across the no-pass cells). Confirms
+     AC #7: SLICE=hard-real is a first-class slice in the tournament
+     runner.
+   * `eval --agent=baseline --slice=hard-real --seeds=1` (no API
+     keys exported) runs all 9 tasks with 9/9 DECLINED — proves the
+     LLM-using agents' no-key DECLINE contract works end-to-end on
+     the slice (AC #8: no harness crash on any agent).
+- Files changed: tasks/suite/hard-real/hard-real-{android-view-class,
+  caniuse-flexbox,gitlab-org-repo,hn-top-comments,huggingface-bert,
+  npm-lodash,pypi-requests,python-docs-os,stackoverflow-tag-javascript
+  }.yaml (9 new) + harness/ts/eval/runner.ts (SLICE_RETRIES) +
+  harness/ts/tests/hard_real_slice.test.ts (11 new tests) +
+  tasks/CLAUDE.md (Hard-real slice + rate-limit-risk sections) +
+  prd.json + progress.txt.
+- Quality checks: `npm run typecheck` clean; `npm test` 437/437
+  (11 new); `uv run pytest -q` 7/7.
+- **Learnings for future iterations:**
+  - The harness was designed to be slice-name-agnostic from the start
+    (loadSliceTasks reads tasks/suite/<slice>/ dynamically;
+    DIFFICULTY_BUDGETS keys off task.difficulty not slice). Adding
+    a new slice = drop YAMLs + (optionally) add a SLICE_RETRIES
+    entry. No CLI/runner changes were needed for US-026, which
+    suggests US-027/028 (auth slices, app slices) will also be
+    incremental on the same axes.
+  - Hostname diversity is the slice's design lever, not goal text.
+    Author the slice for breadth (9 sites, 9 hosts) and let the
+    AC's "no single-page extraction" guarantee ensure interaction.
+    The test that enforces "hostname distinct from easy + from other
+    hard-real" caught two collisions during authoring (initial
+    drafts had github.com and arxiv.org which clash with easy) —
+    keep this test prominent for future slice additions.
+  - Cross-origin verifier constraints matter on hard-real exactly
+    like easy: NO fetch('/__path') because page origin is the live
+    site, not the fixtures server. document.location.pathname is
+    the strongest signal (the slice's design pivot: the answer
+    page is at a different URL than start_url). Body-text checks
+    are the fallback for sites that route via the same pathname
+    (caniuse uses /flexbox, so the location check works; SPAs that
+    push state could be trickier — match document.location.hash
+    too via ||).
+  - The "/i regex required" test (asserts every js verifier
+    expression contains /.../i somewhere) is a tiny static check
+    that catches the easiest mistake (strict-equality verifier on
+    a live site's copy). Future real-site slices should keep this
+    invariant.
+  - Real-site eval timing without an LLM (click-first-link as
+    baseline): ~1.0–1.5s per task (fast because the agent does
+    one click + finish). With an LLM agent doing 5–10 steps,
+    expect 30–120s per task — a full 7-agent × 9-task sweep is
+    on the order of 30–60 wall minutes if run serially, less
+    with the BrowserPool plumbed in (out of scope for US-026
+    but a natural follow-up if hard-real is run frequently).
+  - Verifier robustness pattern: `URL pattern && body text
+    pattern`. URL is structural (resists copy edits), body text
+    is semantic (resists routing changes). Either signal alone is
+    brittle on a real site; the && of both is a "site has to
+    rename AND change copy" failure mode, which is rare. The hn
+    verifier is the canonical example:
+      /^\/item$/.test(pathname) && /[?&]id=\d+/.test(search) &&
+      /(comments?|points?)/i.test(body)
+    catches the common cases without depending on any one of them.
+---

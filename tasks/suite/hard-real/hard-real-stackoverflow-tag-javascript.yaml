@@ -1,0 +1,16 @@
+id: hard-real-stackoverflow-tag-javascript
+goal: |
+  Start on Stack Overflow's home page (https://stackoverflow.com/) and
+  navigate to the page listing questions tagged "javascript". You may use
+  the Tags link or any other in-site navigation. The destination URL
+  contains /questions/tagged/javascript. No login is required.
+start_url: "https://stackoverflow.com/"
+difficulty: hard
+tags:
+  - hard
+  - real_site
+  - navigate
+  - cross_page
+verifier:
+  kind: js
+  expression: "/\\/questions\\/tagged\\/javascript/i.test(document.location.pathname) && (/javascript/i.test(document.title) || /javascript/i.test(document.body.innerText))"

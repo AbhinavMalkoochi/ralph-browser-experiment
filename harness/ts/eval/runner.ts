@@ -42,13 +42,16 @@ export const DIFFICULTY_BUDGETS: Record<string, BudgetLimits> = {
 };
 
 /**
- * Per-slice retry defaults. The easy slice exercises live public sites that
- * are subject to transient flakiness (DNS, TLS, transient 502s, captchas);
- * AC #5 of US-009 requires up to 2 retries before recording a failure on
- * easy. Other slices retry zero times by default.
+ * Per-slice retry defaults. The easy and hard-real slices exercise live
+ * public sites that are subject to transient flakiness (DNS, TLS, transient
+ * 502s, captchas); AC #5 of US-009 requires up to 2 retries before recording
+ * a failure on easy, and US-026 inherits the same policy for hard-real
+ * (real sites are flaky regardless of difficulty). Other slices retry zero
+ * times by default.
  */
 export const SLICE_RETRIES: Record<string, number> = {
   easy: 2,
+  "hard-real": 2,
 };
 
 export function defaultRetriesForSlice(slice: string): number {
