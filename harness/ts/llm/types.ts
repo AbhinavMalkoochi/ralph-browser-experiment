@@ -72,7 +72,7 @@ export interface ProviderResponse {
 
 export interface LLMProvider {
   /** Stable name used in routing. */
-  readonly name: "openai" | "gemini" | "mock";
+  readonly name: "openai" | "gemini" | "anthropic" | "mock";
   call(req: ProviderRequest): Promise<ProviderResponse>;
 }
 

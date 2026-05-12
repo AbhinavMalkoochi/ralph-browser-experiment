@@ -3370,3 +3370,53 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     doubled — real-site latency is the variance source; agents still
     have to be efficient on tokens and cost.
 ---
+
+## 2026-05-11 - US-030
+- Anthropic Claude wired as third LLM provider.
+- Files:
+  - harness/ts/llm/providers/anthropic.ts (new): Messages API, multimodal
+    image_url → native image source translation (base64 / url), 429+5xx
+    retry with Retry-After + body-hint + 500ms exponential floor, parity
+    with OpenAiProvider. `tool` role rejected; `json_mode` silently
+    dropped (Anthropic has no equivalent); `max_tokens` defaulted to
+    4096 because the API requires it.
+  - harness/ts/llm/types.ts: LLMProvider.name union now includes "anthropic".
+  - harness/ts/llm/client.ts: `claude-*` routes to providers.anthropic;
+    defaultClient registers ANTHROPIC_API_KEY for redaction.
+  - harness/ts/llm/pricing.ts: comment updated (entries already existed
+    from US-004 with correct 2026 list prices: opus 15/75, sonnet 3/15,
+    haiku 0.8/4 per 1M tokens).
+  - agents/runtime-codegen/agent.ts, agents/network-shadow/agent.ts:
+    model override now reads GBA_MODEL env var as fallback so the
+    ablation runner can swap models without touching agent constructors.
+  - harness/ts/cli/model_ablation.ts (new): 2 agents × 3 models × hard
+    slice = 60 cells. Sets GBA_MODEL per cell, reuses runEval, reads
+    per-cell summary.json for mean cost, prints + writes markdown table.
+  - harness/ts/tests/llm_anthropic_provider.test.ts (new): 12 tests
+    (wire shape, multimodal translation, retry+exhaustion, non-transient
+    no-retry, tool-role rejection, claude-* routing, replay miss,
+    record-replay determinism, missing provider, defaultClient redaction
+    list, API key redaction). All pass.
+  - docs/model-ablation-2026-05-11.md (new): methodology, how-to-run,
+    pre-registered hypotheses, results template. Live numbers require
+    ANTHROPIC_API_KEY which the Ralph iteration does not have; the row
+    template is filled by re-running the CLI in an environment that does.
+- Quality: typecheck OK; npm test 483/483 pass; uv run pytest 7/7 pass.
+- **Learnings for future iterations:**
+  - Anthropic-specific quirks vs OpenAI: (a) max_tokens is REQUIRED;
+    (b) no json_mode toggle (prompt-driven); (c) `tool` role is not a
+    chat-layer concept; (d) header auth via x-api-key, not Authorization
+    Bearer; (e) version header `anthropic-version: 2023-06-01` is
+    mandatory. Cache keys still capture the original LLMOpts so
+    swapping providers later re-keys cleanly.
+  - The LLMProvider.name union is checked nowhere structural but is the
+    de facto contract — when adding a fourth provider, extend the union
+    in llm/types.ts AND the `providers` shape in llm/client.ts in lockstep.
+  - Agents that want to participate in model-diversity ablations should
+    read GBA_MODEL as a fallback after `opts.model` and before
+    DEFAULT_MODEL. The same pattern can be lifted into other agents.
+  - LLMClient.pickProvider routes by model prefix. The `mock-*` path
+    falls through every provider slot so a single mock provider injected
+    under any name works for tests; don't add a fourth provider name
+    without extending that fallback list.
+---

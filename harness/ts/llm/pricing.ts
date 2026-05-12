@@ -26,7 +26,8 @@ export const PRICING: Record<string, ModelPrice> = {
   "gemini-2.5-flash": { input: 0.075, output: 0.3 },
   "gemini-2.5-flash-lite": { input: 0.04, output: 0.15 },
 
-  // Anthropic (optional; not wired by US-004)
+  // Anthropic (wired by US-030 via providers/anthropic.ts).
+  // List prices in USD per 1M tokens, public as of early 2026.
   "claude-opus-4-7": { input: 15, output: 75 },
   "claude-sonnet-4-6": { input: 3, output: 15 },
   "claude-haiku-4-5": { input: 0.8, output: 4 },

@@ -18,6 +18,7 @@ import { Budget } from "../agent/types.js";
 import { LLMCache, hashKey, defaultCacheRoot } from "./cache.js";
 import type { CacheEntry } from "./cache.js";
 import { costUsd } from "./pricing.js";
+import { AnthropicProvider } from "./providers/anthropic.js";
 import { GeminiProvider } from "./providers/gemini.js";
 import { OpenAiProvider } from "./providers/openai.js";
 import type {
@@ -42,7 +43,7 @@ export interface LLMClientOpts {
   /** When set, every call appends an llm_call line into this trajectory. */
   trajectory?: Trajectory;
   /** Provider plumbing. Defaults to no providers (replay-only client). */
-  providers?: { openai?: LLMProvider; gemini?: LLMProvider };
+  providers?: { openai?: LLMProvider; gemini?: LLMProvider; anthropic?: LLMProvider };
   /** Strings (typically API keys) to scrub from any error message that escapes the client. */
   redactValues?: string[];
 }
@@ -53,7 +54,7 @@ export class LLMClient {
   private readonly paradigmSeed?: string;
   private readonly budget?: Budget;
   private readonly trajectory?: Trajectory;
-  private readonly providers: { openai?: LLMProvider; gemini?: LLMProvider };
+  private readonly providers: { openai?: LLMProvider; gemini?: LLMProvider; anthropic?: LLMProvider };
   private readonly redactValues: string[];
 
   constructor(opts: LLMClientOpts = {}) {
@@ -153,10 +154,15 @@ export class LLMClient {
       if (this.providers.gemini) return this.providers.gemini;
       throw new LLMProviderUnavailableError(model);
     }
+    if (model.startsWith("claude-")) {
+      if (this.providers.anthropic) return this.providers.anthropic;
+      throw new LLMProviderUnavailableError(model);
+    }
     if (model.startsWith("mock-")) {
-      // Tests inject a mock under one of the named slots; check both.
+      // Tests inject a mock under one of the named slots; check all.
       if (this.providers.openai) return this.providers.openai;
       if (this.providers.gemini) return this.providers.gemini;
+      if (this.providers.anthropic) return this.providers.anthropic;
       throw new LLMProviderUnavailableError(model);
     }
     throw new LLMProviderUnavailableError(model);
@@ -236,6 +242,10 @@ export function defaultClient(opts: DefaultClientOpts = {}): LLMClient {
   if (env.GEMINI_API_KEY) {
     providers.gemini = new GeminiProvider({ apiKey: env.GEMINI_API_KEY });
     redactValues.push(env.GEMINI_API_KEY);
+  }
+  if (env.ANTHROPIC_API_KEY) {
+    providers.anthropic = new AnthropicProvider({ apiKey: env.ANTHROPIC_API_KEY });
+    redactValues.push(env.ANTHROPIC_API_KEY);
   }
   for (const name of HARD_AUTH_ENV_VARS) {
     const v = env[name];

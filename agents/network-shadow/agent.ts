@@ -150,7 +150,7 @@ export default class NetworkShadowAgent extends Agent {
       this.opts.llmFactory ??
       ((b, t) => defaultClient({ budget: b, trajectory: t, paradigmSeed: this.id }));
     const llm = factory(budget, trajectory);
-    const model = this.opts.model ?? DEFAULT_MODEL;
+    const model = this.opts.model ?? process.env.GBA_MODEL ?? DEFAULT_MODEL;
     const maxSteps = this.opts.maxSteps ?? DEFAULT_MAX_STEPS;
 
     const history: HistoryItem[] = [];
