@@ -650,6 +650,20 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   no tasks" which throws at loadSliceTasks. Tests assert the
   skipped-shape via slicePreflight().verdict.shape NOT via the
   end-to-end runner (it would need 4 mocked apps).
+- Hard-auth slice (US-028) at tasks/suite/hard-auth/ uses opt-in
+  real-site auth. Two new Task fields parsed by verifier/loader.ts:
+  `requires_env: string[]` (env vars that must be set or the cell
+  SKIPs) and `auth: { cookies?, headers? }` (browser-layer injection
+  with `${VAR}` placeholders). injectAuth() in harness/ts/auth/inject.ts
+  calls Network.setExtraHTTPHeaders + Network.setCookies after
+  Network.enable. The tournament + eval runners SKIP cells whose
+  requires_env are unset (terminal_state="SKIPPED_AUTH", summary.json
+  still written for resumability) and the leaderboard aggregator
+  drops SKIPPED_AUTH from totals — so opt-out users see clean rows.
+  wallSeconds budget is auto-doubled when requires_env is non-empty.
+  defaultClient() in harness/ts/llm/client.ts redacts well-known
+  auth env-var VALUES (HARD_AUTH_ENV_VARS) when set in process.env;
+  keep that list in sync with KNOWN_AUTH_ENV_VARS in auth/inject.ts.
 ---
 
 ## 2026-05-08 - US-001
@@ -3284,4 +3298,75 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     skip-anchor hash adds and full-URL changes. Body-text alone
     is not enough; URL-shape alone is not enough either (because
     some bodies are dynamically loaded by JS after navigate).
+---
+
+## 2026-05-11 - US-028
+- Added hard-auth slice for opt-in real-site auth tasks. Skipping when
+  required env vars are unset is built into the tournament runner (and
+  the eval runner for consistency); skipped cells get terminal_state=
+  SKIPPED_AUTH + a summary.json so resumability is preserved, and the
+  leaderboard aggregate drops them so they do not count as pass/fail.
+- New module harness/ts/auth/inject.ts:
+  * missingEnv(task,env) -> [unset env vars]
+  * substituteEnv(template,env) -> ${VAR} placeholder replacement
+  * authSecretValues(task,env) -> redaction list (substantive >=4 chars)
+  * injectAuth(session, AuthSpec, env) -> Network.setExtraHTTPHeaders +
+    Network.setCookies. Caller must Network.enable first.
+- New Task fields (verifier/types.ts + loader.ts):
+  * requires_env?: string[]
+  * auth?: { cookies?: AuthCookieSpec[]; headers?: Record<string,string> }
+  Loader rejects malformed `auth` blocks at task-load time.
+- LLMClient.defaultClient now redacts well-known auth env-var VALUES
+  (GITHUB_PAT, HF_TOKEN, NPM_AUTH_TOKEN, …) when present in process.env,
+  in addition to OPENAI/GEMINI keys. Sources of truth: HARD_AUTH_ENV_VARS
+  in harness/ts/llm/client.ts AND KNOWN_AUTH_ENV_VARS in
+  harness/ts/auth/inject.ts — keep these aligned.
+- Five YAMLs at tasks/suite/hard-auth/: github-issue-comment,
+  github-repo-description, huggingface-model-metadata, npm-package-metadata,
+  google-form-public (no-auth control). Each declares requires_env;
+  cookies/headers reference env via `${VAR}` placeholders.
+- Per-task wall-clock budget is doubled when `requires_env` is non-empty
+  (real-site latency variance, AC #7). Doubling applied in BOTH the
+  tournament runner and the eval runner; SLICE_RETRIES.hard-auth = 2.
+- .env.example now documents every new env var with a token-scoping
+  cheat sheet (fine-grained PAT, HF write-token, npm granular-access).
+- Tests: harness/ts/tests/hard_auth_slice.test.ts validates the slice
+  shape + missingEnv/substituteEnv/authSecretValues + the leaderboard
+  drops SKIPPED_AUTH cells from totals.
+- Files changed/added: harness/ts/auth/inject.ts (new),
+  harness/ts/agent/types.ts (TerminalState union),
+  harness/ts/verifier/{types,loader}.ts (requires_env + auth fields),
+  harness/ts/tournament/runner.ts (SKIP path, doubled budget,
+  injectAuth pre-navigate), harness/ts/tournament/leaderboard.ts
+  (drop SKIPPED_AUTH from aggregate), harness/ts/eval/runner.ts
+  (SKIP path + injectAuth + doubled budget + SLICE_RETRIES.hard-auth),
+  harness/ts/llm/client.ts (HARD_AUTH_ENV_VARS redaction in defaultClient),
+  tasks/suite/hard-auth/*.yaml (5 task specs), .env.example
+  (auth env vars + scoping cheat sheet), prd.json (US-028 passes=true),
+  harness/ts/tests/hard_auth_slice.test.ts (new).
+- Quality checks: `npm run typecheck` clean, `npm test` 471/471 pass,
+  `uv run pytest -q` 7/7 pass.
+- **Learnings for future iterations:**
+  - SKIPPED_AUTH is a terminal_state, not a runner verdict — the SKIP
+    branch still writes summary.json so the resumable runner treats the
+    cell as done. The leaderboard aggregator is the place that decides
+    "skipped cells do not count"; doing it at the runner would leave
+    inconsistent counts in any code path that reads summaries directly.
+  - The minimal YAML loader still does not support inline mappings in
+    list items. When authoring `- name: foo` inside a list, write it as
+    `-\n      name: foo` instead. The hard-auth YAMLs follow this shape;
+    the validator catches it at load time.
+  - When auth.requires_env is satisfied the runner calls Network.enable
+    BEFORE injectAuth (just like loginAs for hard-app). Network.setCookies
+    silently no-ops if Network is not enabled — easy to miss because
+    there's no error, the cookie just never lands.
+  - Substantive-secret filter in defaultClient: a value < 8 chars is NOT
+    added to the redaction list. This prevents short repo slugs (e.g.
+    "myorg/x") from over-redacting normal prose in trajectories. Real
+    tokens (GitHub PAT >=40 chars, HF >=37 chars, npm >=72 chars) always
+    pass the threshold.
+  - Doubling the wallSeconds budget for `requires_env` tasks is per-cell
+    in both runners. Other budget axes (tokens, usd, steps) are NOT
+    doubled — real-site latency is the variance source; agents still
+    have to be efficient on tokens and cost.
 ---

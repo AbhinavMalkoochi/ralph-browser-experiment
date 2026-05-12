@@ -1,0 +1,34 @@
+id: hard-auth-huggingface-model-metadata
+goal: |
+  Open the Hugging Face model card for the sandbox repo (URL pattern
+  https://huggingface.co/<owner>/<name>) and edit the model card metadata
+  so the "license" front-matter field is exactly "mit" and the model card
+  body contains the phrase "ralph-agent-ack". You are already authenticated;
+  use the in-page "Edit" button rather than the API. Stop on the updated
+  model page.
+start_url: "https://huggingface.co/"
+difficulty: hard
+tags:
+  - hard
+  - real_site
+  - auth
+  - fill
+  - cross_page
+requires_env:
+  - HF_TOKEN
+  - HF_TEST_REPO
+auth:
+  cookies:
+    -
+      name: token
+      value: "${HF_TOKEN}"
+      domain: ".huggingface.co"
+      path: "/"
+      secure: true
+      httpOnly: true
+      sameSite: Lax
+  headers:
+    Authorization: "Bearer ${HF_TOKEN}"
+verifier:
+  kind: js
+  expression: "/\\/(?:[^/]+)\\/(?:[^/]+)\\/?$/.test(document.location.pathname) && /ralph-agent-ack/i.test(document.body.innerText) && /license:\\s*mit/i.test(document.body.innerText)"

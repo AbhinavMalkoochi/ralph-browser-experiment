@@ -8,6 +8,8 @@ import { readFile } from "node:fs/promises";
 import { parseYaml, type YamlValue } from "./yaml.js";
 import {
   InvalidTaskSpecError,
+  type AuthCookieSpec,
+  type AuthSpec,
   type Difficulty,
   type Task,
   type VerifierSpec,
@@ -48,7 +50,86 @@ export function validateTaskSpec(value: unknown, source = "<task>"): Task {
     throw new InvalidTaskSpecError(`${source}: missing or invalid "verifier" mapping`);
   }
   const verifier = validateVerifierSpec(verifierVal, tags, source);
-  return { id, goal, start_url, difficulty, tags, verifier };
+  const requires_env = optionalStringArray(value, "requires_env", source);
+  const auth = optionalAuthSpec(value, source);
+  const task: Task = { id, goal, start_url, difficulty, tags, verifier };
+  if (requires_env) task.requires_env = requires_env;
+  if (auth) task.auth = auth;
+  return task;
+}
+
+function optionalStringArray(
+  obj: Record<string, unknown>,
+  key: string,
+  source: string,
+): string[] | undefined {
+  if (!(key in obj) || obj[key] === undefined || obj[key] === null) return undefined;
+  const v = obj[key];
+  if (!Array.isArray(v)) {
+    throw new InvalidTaskSpecError(`${source}: "${key}" must be a list of strings`);
+  }
+  for (const item of v) {
+    if (typeof item !== "string" || item.trim().length === 0) {
+      throw new InvalidTaskSpecError(`${source}: every "${key}" entry must be a non-empty string`);
+    }
+  }
+  return v as string[];
+}
+
+function optionalAuthSpec(obj: Record<string, unknown>, source: string): AuthSpec | undefined {
+  if (!("auth" in obj) || obj.auth === undefined || obj.auth === null) return undefined;
+  const av = obj.auth;
+  if (!isPlainObject(av)) {
+    throw new InvalidTaskSpecError(`${source}: "auth" must be a mapping`);
+  }
+  const out: AuthSpec = {};
+  if ("cookies" in av && av.cookies !== undefined && av.cookies !== null) {
+    if (!Array.isArray(av.cookies)) {
+      throw new InvalidTaskSpecError(`${source}: auth.cookies must be a list`);
+    }
+    const cookies: AuthCookieSpec[] = [];
+    for (const c of av.cookies) {
+      if (!isPlainObject(c)) {
+        throw new InvalidTaskSpecError(`${source}: every auth.cookies entry must be a mapping`);
+      }
+      const name = c.name;
+      const value = c.value;
+      const domain = c.domain;
+      if (typeof name !== "string" || name.length === 0) {
+        throw new InvalidTaskSpecError(`${source}: auth.cookies[].name required`);
+      }
+      if (typeof value !== "string") {
+        throw new InvalidTaskSpecError(`${source}: auth.cookies[].value required`);
+      }
+      if (typeof domain !== "string" || domain.length === 0) {
+        throw new InvalidTaskSpecError(`${source}: auth.cookies[].domain required`);
+      }
+      const cookie: AuthCookieSpec = { name, value, domain };
+      if (typeof c.path === "string") cookie.path = c.path;
+      if (typeof c.secure === "boolean") cookie.secure = c.secure;
+      if (typeof c.httpOnly === "boolean") cookie.httpOnly = c.httpOnly;
+      if (c.sameSite === "Strict" || c.sameSite === "Lax" || c.sameSite === "None") {
+        cookie.sameSite = c.sameSite;
+      }
+      cookies.push(cookie);
+    }
+    out.cookies = cookies;
+  }
+  if ("headers" in av && av.headers !== undefined && av.headers !== null) {
+    if (!isPlainObject(av.headers)) {
+      throw new InvalidTaskSpecError(`${source}: auth.headers must be a mapping`);
+    }
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(av.headers)) {
+      if (typeof v !== "string") {
+        throw new InvalidTaskSpecError(`${source}: auth.headers.${k} must be a string`);
+      }
+      headers[k] = v;
+    }
+    out.headers = headers;
+  }
+  if (!out.cookies && !out.headers) return undefined;
+  return out;
 }
 
 export function validateVerifierSpec(

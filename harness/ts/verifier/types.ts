@@ -68,6 +68,32 @@ export interface LlmJudgeSpec {
 
 export type VerifierSpec = JsVerifierSpec | TrajectoryPredicateSpec | LlmJudgeSpec;
 
+/**
+ * Auth-injection spec (US-028). Auth is injected at the BROWSER layer so
+ * agents never see the secret in their goal or observations:
+ *   - cookies are set via Network.setCookie before navigate
+ *   - headers are applied to every request via Page.setExtraHTTPHeaders
+ * Values use `${ENV_VAR}` placeholders; the runner reads the env at run
+ * time. The same env var names appear in `requires_env` so the runner
+ * can SKIP cleanly when secrets are unset.
+ */
+export interface AuthCookieSpec {
+  name: string;
+  /** Static value, or `${ENV_VAR}` placeholder, or both interleaved. */
+  value: string;
+  domain: string;
+  path?: string;
+  secure?: boolean;
+  httpOnly?: boolean;
+  sameSite?: "Strict" | "Lax" | "None";
+}
+
+export interface AuthSpec {
+  cookies?: AuthCookieSpec[];
+  /** Header name -> template string (may contain `${ENV_VAR}` placeholders). */
+  headers?: Record<string, string>;
+}
+
 export interface Task {
   id: string;
   goal: string;
@@ -75,6 +101,14 @@ export interface Task {
   difficulty: Difficulty;
   tags: string[];
   verifier: VerifierSpec;
+  /**
+   * Env vars that MUST be set for this task to run. When any are unset the
+   * tournament runner records terminal_state="SKIPPED_AUTH" and the cell
+   * is excluded from leaderboard totals. (US-028)
+   */
+  requires_env?: string[];
+  /** Browser-layer auth injection. See AuthSpec for substitution rules. */
+  auth?: AuthSpec;
 }
 
 /** Context handed to a Verifier. Some kinds use only a subset. */

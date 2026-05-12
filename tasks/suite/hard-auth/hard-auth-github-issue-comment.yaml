@@ -1,0 +1,35 @@
+id: hard-auth-github-issue-comment
+goal: |
+  Open the sandbox repository's issue tracker (the agent should look for
+  an existing issue marked with the "ralph-sandbox" label or any open
+  issue) and post a new comment whose body contains the exact phrase
+  "ralph-agent-ack". After commenting, the page URL should still match
+  the issue's canonical path /<owner>/<repo>/issues/<n>. The browser is
+  already authenticated for the sandbox repo; you should NOT see or
+  paste any token text.
+start_url: "https://github.com/"
+difficulty: hard
+tags:
+  - hard
+  - real_site
+  - auth
+  - fill
+  - cross_page
+requires_env:
+  - GITHUB_PAT
+  - GITHUB_SANDBOX_REPO
+auth:
+  cookies:
+    -
+      name: user_session
+      value: "${GITHUB_PAT}"
+      domain: ".github.com"
+      path: "/"
+      secure: true
+      httpOnly: true
+      sameSite: Lax
+  headers:
+    Authorization: "Bearer ${GITHUB_PAT}"
+verifier:
+  kind: js
+  expression: "/\\/issues\\/\\d+/.test(document.location.pathname) && /ralph-agent-ack/i.test(document.body.innerText)"

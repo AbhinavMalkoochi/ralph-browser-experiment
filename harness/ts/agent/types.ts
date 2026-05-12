@@ -13,7 +13,8 @@ export type TerminalState =
   | "DECLINED" // agent gave up explicitly (e.g. cannot proceed)
   | "BUDGET_EXCEEDED" // budget axis tripped
   | "ERROR" // unrecoverable internal failure
-  | "SESSION_TIMEOUT"; // hard wall enforced by harness (US-003)
+  | "SESSION_TIMEOUT" // hard wall enforced by harness (US-003)
+  | "SKIPPED_AUTH"; // task requires env vars that were not set (US-028)
 
 export interface VerifierVerdict {
   pass: boolean;

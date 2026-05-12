@@ -23,6 +23,7 @@ import {
   type FixturesServer,
 } from "../../../tasks/fixtures/server.js";
 import { appFromTags, loginAs } from "../cdp/loginAs.js";
+import { injectAuth, missingEnv } from "../auth/inject.js";
 
 /**
  * Built-in agent id aliases.
@@ -53,6 +54,9 @@ export const DIFFICULTY_BUDGETS: Record<string, BudgetLimits> = {
 export const SLICE_RETRIES: Record<string, number> = {
   easy: 2,
   "hard-real": 2,
+  // US-028: real third-party auth has even more latency variance + rate
+  // limits; share the hard-real policy of 2 retries before recording fail.
+  "hard-auth": 2,
 };
 
 export function defaultRetriesForSlice(slice: string): number {
@@ -149,6 +153,21 @@ export async function runEval(opts: EvalOptions): Promise<EvalSummary> {
   try {
     for (const task of tasks) {
       for (let seed = 0; seed < opts.seeds; seed++) {
+        // US-028: SKIP cleanly when an auth task lacks env vars.
+        const missing = missingEnv(task);
+        if (missing.length > 0) {
+          results.push({
+            task_id: task.id,
+            seed,
+            terminal_state: "SKIPPED_AUTH",
+            pass: false,
+            score: 0,
+            reason: `requires_env unset: ${missing.join(", ")}`,
+            durationMs: 0,
+            attempts: 0,
+          });
+          continue;
+        }
         const result = await runWithRetry(retries, async () => {
           if (fixtures) await fixtures.reset();
           const startUrl = fixtures ? resolveFixtureUrl(task.start_url, fixtures.origin) : task.start_url;
@@ -203,8 +222,11 @@ async function runOne(
   runsRoot: string,
 ): Promise<EvalResult> {
   const t0 = Date.now();
-  const limits = DIFFICULTY_BUDGETS[task.difficulty] ?? DIFFICULTY_BUDGETS.hard;
-  const budget = new Budget(limits as BudgetLimits);
+  const baseLimits = (DIFFICULTY_BUDGETS[task.difficulty] ?? DIFFICULTY_BUDGETS.hard) as BudgetLimits;
+  const limits: BudgetLimits = task.requires_env && task.requires_env.length > 0
+    ? { ...baseLimits, wallSeconds: baseLimits.wallSeconds * 2 }
+    : baseLimits;
+  const budget = new Budget(limits);
   const session = await CdpBrowserSession.create();
   let terminalState: TerminalState | "ERROR" | null = null;
   let pass = false;
@@ -217,6 +239,10 @@ async function runOne(
     if (app) {
       await session.cdp.send("Network.enable");
       await loginAs(session, app);
+    }
+    if (task.auth) {
+      await session.cdp.send("Network.enable");
+      await injectAuth(session, task.auth);
     }
     await session.navigate(startUrl);
     const traj = await agent.run(task.goal, session, budget, {

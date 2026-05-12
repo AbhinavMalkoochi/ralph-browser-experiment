@@ -209,6 +209,22 @@ export interface DefaultClientOpts extends Omit<LLMClientOpts, "providers" | "re
  * If neither key is set, the client is replay-only (still useful for tests
  * that pre-populate the cache).
  */
+/**
+ * Hard-auth slice (US-028): well-known third-party auth env vars. If any
+ * of these are set in the environment, their VALUES are added to the
+ * LLMClient's redaction list so a leaked token never reaches a committed
+ * trajectory or error message. Keep this in sync with KNOWN_AUTH_ENV_VARS
+ * in harness/ts/auth/inject.ts and the .env.example documentation.
+ */
+export const HARD_AUTH_ENV_VARS: readonly string[] = [
+  "GITHUB_PAT",
+  "GITHUB_SANDBOX_REPO",
+  "HF_TOKEN",
+  "HF_TEST_REPO",
+  "NPM_AUTH_TOKEN",
+  "NPM_SANDBOX_PACKAGE",
+];
+
 export function defaultClient(opts: DefaultClientOpts = {}): LLMClient {
   const env = opts.env ?? process.env;
   const providers: NonNullable<LLMClientOpts["providers"]> = {};
@@ -220,6 +236,15 @@ export function defaultClient(opts: DefaultClientOpts = {}): LLMClient {
   if (env.GEMINI_API_KEY) {
     providers.gemini = new GeminiProvider({ apiKey: env.GEMINI_API_KEY });
     redactValues.push(env.GEMINI_API_KEY);
+  }
+  for (const name of HARD_AUTH_ENV_VARS) {
+    const v = env[name];
+    // Only redact substantive secret values (length>=8) — repo slugs and
+    // owner names ("octocat/hello") are not secret and would over-redact
+    // legitimate prose.
+    if (v && v.length >= 8 && !redactValues.includes(v)) {
+      redactValues.push(v);
+    }
   }
   return new LLMClient({ ...opts, providers, redactValues });
 }

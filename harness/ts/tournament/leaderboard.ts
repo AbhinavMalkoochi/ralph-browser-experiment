@@ -14,7 +14,12 @@ import type { BracketResult, CellSummary, LeaderboardFile, LeaderboardRow } from
 
 export function aggregate(summaries: CellSummary[]): LeaderboardRow[] {
   const byAgent = new Map<string, CellSummary[]>();
+  // US-028: SKIPPED_AUTH cells are bookkeeping entries (task required env
+  // vars that were unset). They count as neither pass nor fail and must
+  // not skew any leaderboard metric, so they're dropped at the aggregation
+  // boundary. Their summary.json still lives on disk for resumability.
   for (const s of summaries) {
+    if (s.terminal_state === "SKIPPED_AUTH") continue;
     const list = byAgent.get(s.agent_id) ?? [];
     list.push(s);
     byAgent.set(s.agent_id, list);

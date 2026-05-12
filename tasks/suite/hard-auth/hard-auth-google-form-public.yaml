@@ -1,0 +1,22 @@
+id: hard-auth-google-form-public
+goal: |
+  Open the publicly-shared Google Form whose URL is configured in
+  GOOGLE_FORM_PUBLIC_URL, fill in any required short-answer field with
+  the phrase "ralph-agent-ack", and submit the form. After submission
+  Google's confirmation page is at a URL containing "formResponse" and
+  the body contains text matching "your response has been recorded" or
+  "submitted". No authentication is needed for the form itself, but
+  GOOGLE_FORM_PUBLIC_URL must be configured to pick the form to drive.
+start_url: "https://docs.google.com/forms"
+difficulty: hard
+tags:
+  - hard
+  - real_site
+  - fill
+  - cross_page
+  - public_form
+requires_env:
+  - GOOGLE_FORM_PUBLIC_URL
+verifier:
+  kind: js
+  expression: "/formResponse|\\/viewform/.test(document.location.href) && /(your response has been recorded|submitted|received your response)/i.test(document.body.innerText)"

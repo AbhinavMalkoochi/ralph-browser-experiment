@@ -41,6 +41,7 @@ import { buildBracket } from "./bracket.js";
 import { hasSummary, readSummary, summaryPath, writeSummary } from "./summary.js";
 import { slicePreflight } from "./preflight.js";
 import { appFromTags, loginAs } from "../cdp/loginAs.js";
+import { injectAuth, missingEnv } from "../auth/inject.js";
 import type {
   BracketResult,
   CellSummary,
@@ -184,6 +185,35 @@ async function runOrResumeCell(opts: RunOrResumeOpts): Promise<CellSummary> {
       return { ...cached, reused: true };
     }
   }
+  // Hard-auth slice (US-028): skip cleanly when required env vars are absent.
+  // Skipped cells DO get a summary.json (so resumability and progress logs
+  // are unaffected) but the leaderboard aggregator excludes them from totals.
+  const missing = missingEnv(task);
+  if (missing.length > 0) {
+    const reason = `requires_env unset: ${missing.join(", ")}`;
+    onProgress(`[tournament] skip   agent=${agent.id} task=${task.id} seed=${seed} (${reason})`);
+    const skipped: CellSummary = {
+      agent_id: agent.id,
+      task_id: task.id,
+      seed,
+      difficulty: task.difficulty,
+      completed_at: new Date().toISOString(),
+      terminal_state: "SKIPPED_AUTH",
+      pass: false,
+      score: 0,
+      reason,
+      decline_reason: null,
+      steps: 0,
+      llm_calls: 0,
+      cost_usd: 0,
+      tokens_in: 0,
+      tokens_out: 0,
+      latency_ms: 0,
+      attempts: 0,
+    };
+    await writeSummary(sumPath, skipped);
+    return skipped;
+  }
   onProgress(`[tournament] run    agent=${agent.id} task=${task.id} seed=${seed}`);
   const maxAttempts = Math.max(0, Math.floor(retries)) + 1;
   let last: CellSummary | undefined;
@@ -210,8 +240,13 @@ interface RunCellOpts {
 
 async function runCell(opts: RunCellOpts): Promise<CellSummary> {
   const { agent, task, seed, startUrl, runsRoot } = opts;
-  const limits = DIFFICULTY_BUDGETS[task.difficulty] ?? DIFFICULTY_BUDGETS.hard;
-  const budget = new Budget(limits!);
+  const baseLimits = DIFFICULTY_BUDGETS[task.difficulty] ?? DIFFICULTY_BUDGETS.hard;
+  // US-028 AC #7: real-site auth tasks have >2x latency variance vs fixtures.
+  // Double the wall-clock cap for any task that declares auth requirements.
+  const limits = task.requires_env && task.requires_env.length > 0
+    ? { ...baseLimits!, wallSeconds: baseLimits!.wallSeconds * 2 }
+    : baseLimits!;
+  const budget = new Budget(limits);
   const t0 = Date.now();
   const session = await CdpBrowserSession.create();
   let trajectory: Trajectory | null = null;
@@ -229,6 +264,12 @@ async function runCell(opts: RunCellOpts): Promise<CellSummary> {
     if (app) {
       await session.cdp.send("Network.enable");
       await loginAs(session, app);
+    }
+    // US-028: inject cookies / extra HTTP headers BEFORE navigate so the
+    // agent's very first observation is of an authenticated page.
+    if (task.auth) {
+      await session.cdp.send("Network.enable");
+      await injectAuth(session, task.auth);
     }
     await session.navigate(startUrl);
     if (agent.language === "typescript") {
