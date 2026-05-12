@@ -1,0 +1,35 @@
+id: vision-som
+language: typescript
+summary: |
+  US-031. Successor to vision-grounded with the Set-of-Marks fix
+  (WebVoyager / SeeAct / Operator). Each step the harness walks the page,
+  finds visible interactive elements whose bounding box intersects the
+  viewport, stamps each with `data-gba-som-id="<N>"`, and overlays a
+  numbered red rectangle on the live DOM before capturing a JPEG of the
+  viewport. The LLM sees the annotated screenshot AND a small text mark
+  table; it picks ONE mark id and one action verb. The harness translates
+  "click mark 7" to a CDP Input event dispatched at the centre of mark 7's
+  recomputed bounding box. The LLM never emits raw pixel coordinates.
+  Distinct from vision-grounded (US-018) on the localisation axis: where
+  vision-grounded forced the LLM to localise pixels (and failed 0/10 on the
+  hard slice because gpt-4o-mini and gpt-4o systematically centre-bias
+  their x estimates), this agent removes that failure mode entirely by
+  integer indirection through the DOM. Cost shape: same one-vision-call
+  per step, plus one Runtime.evaluate to draw + one to tear down the
+  overlay.
+approach_keywords:
+  - set_of_marks
+  - numbered_overlays
+  - mark_id_actions
+  - dom_anchored_vision
+  - bbox_grounding
+  - multimodal_with_marks
+distinct_from:
+  - baseline-a11y-react
+  - plan-then-execute
+  - runtime-codegen
+  - speculative-rollback
+  - predicate-driven
+  - vision-grounded
+  - network-shadow
+  - dom-mutation-stream

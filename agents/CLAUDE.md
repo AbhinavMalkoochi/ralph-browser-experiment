@@ -288,6 +288,29 @@ iteration before opening a new slot.
   2/10 hard in 218.8s (modal-stack via clean FSM advance with
   mutation_delta>0 on each step; recoverable via the cell-retry
   semantics). Above both AC thresholds.
+- `vision-som/` — US-031, eighth novel slot. **Set-of-Marks vision**:
+  successor to vision-grounded with the WebVoyager / SeeAct / Operator
+  fix for un-augmented chat-LLM pixel-grounding failure. Per step the
+  harness walks the page, finds visible interactive elements whose
+  bounding box intersects the viewport, stamps each with
+  `data-gba-som-id="<N>"`, and overlays a numbered red rectangle on
+  the live DOM before capturing a JPEG (overlay is then torn down).
+  The LLM sees the annotated screenshot AND a small text mark table
+  (`[N] role "name" bbox=x,y,wxh`) and picks ONE mark id + one action
+  verb (`click(mark)`, `type(mark, text, submit?)`, `scroll`, `wait`,
+  `navigate`, `done`, `decline`). The harness translates "click mark
+  7" to a CDP `Input.dispatchMouseEvent` at the centre of mark 7's
+  recomputed bounding box. **The LLM never emits raw pixel coordinates
+  — only a mark id.** Distinct from vision-grounded on the localisation
+  primitive: the failure mode that bottomed vision-grounded at 0/10
+  hard (gpt-4o-mini centre-biases its x estimates) is removed by
+  integer indirection through the DOM. approach_keywords =
+  [set_of_marks, numbered_overlays, mark_id_actions,
+  dom_anchored_vision, bbox_grounding, multimodal_with_marks];
+  Jaccard=0 vs every prior agent. Fresh ids each step (NOT reused
+  across steps the way baseline-aids are) so the LLM cannot pick a
+  stale id from the prior screenshot. Live eval pending API keys;
+  mechanism + harness covered by 29 unit/e2e tests.
 - `predicate-driven/` — US-017, fourth novel slot. The LLM authors a
   JS PREDICATE upfront (one synthesis call); the agent loop polls the
   predicate in-page after every action and **terminates from CODE the

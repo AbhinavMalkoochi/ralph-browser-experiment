@@ -3420,3 +3420,80 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     under any name works for tests; don't add a fourth provider name
     without extending that fallback list.
 ---
+
+## 2026-05-11 - US-031
+- Shipped vision-som agent: Set-of-Marks successor to vision-grounded.
+- Files added:
+  - agents/vision-som/agent.ts (main loop; multimodal LLM call with
+    annotated screenshot + text mark table; CDP Input dispatch at
+    bbox centre; max-steps/decline/done terminal handling).
+  - agents/vision-som/observe.ts (in-page COLLECT_SCRIPT walks DOM,
+    stamps `data-gba-som-id="<N>"` on visible interactive elements
+    intersecting the viewport, injects `<div id="__gba_som_overlay">`
+    with numbered colour-coded rectangles, then REMOVE_SCRIPT
+    teardown after Page.captureScreenshot).
+  - agents/vision-som/actions.ts (action union: click(mark) /
+    type(mark,text,submit?) / scroll(direction,pixels?) / wait /
+    navigate / done / decline; tolerant JSON parser; CDP Input
+    executor that scrolls element into view + recomputes bbox before
+    dispatching click at its centre; never emits pixel coords picked
+    by the LLM).
+  - agents/vision-som/manifest.yaml (distinct_from lists every prior
+    agent including vision-grounded; approach_keywords with Jaccard=0
+    vs all priors).
+  - agents/vision-som/README.md (mechanism, why-different-from-
+    vision-grounded with citations to the v18 README's failure
+    analysis, distinctness table, files, cost shape).
+  - harness/ts/tests/vision_som_agent.test.ts (29 tests: parseAction
+    success/error matrix, actionLabel formatting, observePage on real
+    Chrome with mark stamping + overlay teardown verification,
+    re-running re-numbers from id=1, executeAction click/type on real
+    Chrome, executeAction unknown-mark soft fail, buildMessages
+    multimodal vs text-fallback, end-to-end DONE/DECLINED/parse-error
+    paths, manifest distinctness vs every prior agent).
+- agents/CLAUDE.md updated with vision-som entry under "Novel agents".
+- Live eval skipped: this Ralph environment has no OPENAI/GEMINI/
+  ANTHROPIC API keys. Per AC #4 the documented-analysis branch is
+  the fallback when hard-slice numbers cannot be measured here; the
+  README's "Why this is different from vision-grounded" section
+  cites the two specific vision-grounded trajectories whose failure
+  modes (centre-bias on submit-order; default-position fallback on
+  modal-stack) the SoM mechanism removes by construction.
+- Quality checks: `npx tsc --noEmit` clean; `npm test` 512/512 pass
+  (29 net new from vision-som + 483 prior).
+- **Learnings for future iterations:**
+  - The data-gba-aid attribute (used by baseline-a11y-react) and
+    data-gba-som-id (used by vision-som) are intentionally separate
+    namespaces. baseline keeps aids stable across steps so its
+    ReAct history can refer back to ids; vision-som re-numbers
+    fresh every step because the LLM only ever sees the CURRENT
+    overlay and a stale id from a prior screenshot would point to
+    the wrong element after any DOM change. Reuse the data-gba-*
+    prefix but pick a unique suffix per agent so concurrent or
+    composed agents do not stomp each other's stamps.
+  - To draw an overlay on the live DOM without altering the
+    user-visible page across steps: capture, then ALWAYS remove in
+    the same observePage() call (use try/finally so the teardown
+    runs even if the screenshot fails). The overlay div uses
+    position:fixed + pointer-events:none + z-index:2147483646 so it
+    sits above app content and never intercepts clicks; defence in
+    depth, since CDP Input dispatch happens AFTER the overlay is
+    gone anyway.
+  - Set-of-Marks compatible-by-design with the existing LLMMessage
+    multimodal payload (extended in US-018 for vision-grounded).
+    No harness changes were needed for this agent — only new
+    in-agent code plus a test file.
+  - For type(mark,text,submit?), focus-then-clear-then-insertText
+    is the most reliable substrate: a click at the bbox centre
+    focuses, then `el.select()` (via Runtime.evaluate on
+    document.activeElement) + Delete clears, then Input.insertText
+    types, then optional Enter via Input.dispatchKeyEvent with
+    text:"\\r" (the same escape vision-grounded learned). Without
+    the Delete pre-step, typing into a field that already has a
+    placeholder/value appends instead of replacing.
+  - The COLLECT_SCRIPT inlines its constants (MARK_LIMIT, TEXT_LIMIT)
+    via template literals at module-load time — the same pattern
+    baseline-a11y-react uses for SNAPSHOT_SCRIPT. Dynamic constants
+    at the script-string level keep the page-side code single-pass
+    and free of cross-realm closure tricks.
+---
