@@ -1,0 +1,37 @@
+id: meta-mixture
+language: typescript
+summary: |
+  US-024. A ROUTING / mixture meta-agent. Each task is classified by
+  cheap features (start_url scheme + host, goal keyword hits) and
+  dispatched to one of the TOP-3 hard-slice agents from the 2026-05-12
+  tournament (runtime-codegen 5/10, network-shadow 3/10,
+  codegen-predicate 2/9). The chosen sub-agent runs as itself but with
+  its `id` overridden to `meta-mixture` so trajectories land under
+  runs/meta-mixture/<task>/<seed>/. A route.json sidecar records the
+  routing decision next to trajectory.jsonl.gz. The router policy is
+  documented in README.md and was tuned ONLY against the easy-slice
+  summary data — no hard-slice outcomes were consulted when picking
+  the rules. Distinct on the COMPOSITION axis (per-task router across
+  pre-existing single-mechanism agents) from every prior slot, all
+  of which are single-mechanism.
+approach_keywords:
+  - meta_routing
+  - per_task_dispatch
+  - mixture_of_experts
+  - cheap_feature_router
+  - keyword_rule_router
+  - top3_ensemble
+  - agent_picker
+distinct_from:
+  - baseline-a11y-react
+  - plan-then-execute
+  - runtime-codegen
+  - speculative-rollback
+  - predicate-driven
+  - vision-grounded
+  - network-shadow
+  - dom-mutation-stream
+  - vision-som
+  - codegen-predicate
+  - dom-shell
+  - fs-memory

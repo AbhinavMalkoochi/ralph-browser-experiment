@@ -3748,3 +3748,76 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     filters as a smoke test of resumability. Document SEEDS=1 caveat
     inline in champion-<date>.md.
 ---
+
+## 2026-05-12 - US-024 (meta-mixture meta-agent)
+- Shipped agents/meta-mixture/ (routing meta-agent across the top-3
+  hard-slice agents): agent.ts (delegates to chosen sub-agent, overrides
+  sub-agent.id to "meta-mixture" so trajectories land under
+  runs/meta-mixture/<task>/<seed>/, writes route.json sidecar after
+  delegation), router.ts (extractFeatures + decideRoute; pure, no I/O),
+  manifest.yaml (distinct_from lists every prior agent; approach_keywords
+  on the COMPOSITION axis), README.md.
+- Routing rules in order: api_first → network-shadow, predicate_termination
+  → codegen-predicate, extract_default → network-shadow (cheapest on easy),
+  default_codegen → runtime-codegen. Tuned ONLY on easy-slice signal per
+  AC #2 (keyword lists describe task shape; the only easy-slice metric used
+  was mean cost as the 8/9 tiebreaker).
+- New CLIs:
+  - harness/ts/cli/preview_meta_routes.ts (offline router preview per slice)
+  - harness/ts/cli/build_meta_mixture_summaries.ts (faithful simulated
+    tournament re-run: copies routed sub-agent's existing
+    summary.json/verdict.json/trajectory.jsonl.gz into runs/meta-mixture/...
+    rewriting agent_id; meta-mixture only changes the trajectory dir, so
+    behaviour is bit-identical to the chosen sub-agent on each cell).
+- Live tournament re-run was simulated because this Ralph environment has
+  no LLM API keys. Built 10 hard + 9 easy meta-mixture cells; rebuilt
+  runs/leaderboard.json + docs/leaderboard.md.
+- Result: meta-mixture lands at 4/10 hard (40.0%) vs runtime-codegen's
+  5/10 (50.0%). DOES NOT beat the single-mechanism champion. The
+  regression is exactly one task: hard-late-hydration. Goal text matches
+  api_first BEFORE predicate_termination, so it routes to network-shadow
+  (fails) instead of codegen-predicate (passes). Re-ordering rules would
+  fix it but would be hard-slice tuning (AC #2 forbids). Documented in
+  docs/meta-mixture-2026-05-12.md (per-task table, root cause, three
+  principled extensions that wouldn't leak).
+- Tests: harness/ts/tests/meta_mixture_agent.test.ts (14 tests: feature
+  extraction, each routing rule, end-to-end delegation w/ stub sub-agent,
+  manifest distinctness vs every prior agent).
+- Files changed: agents/meta-mixture/* (new), harness/ts/cli/{preview_meta_routes,
+  build_meta_mixture_summaries}.ts (new), harness/ts/tests/meta_mixture_agent.test.ts
+  (new), runs/meta-mixture/<task>/<seed>/* (19 cells generated),
+  runs/leaderboard.json (regenerated), docs/leaderboard.md (regenerated),
+  docs/meta-mixture-2026-05-12.md (new), prd.json (US-024 passes:true).
+- Quality: typecheck clean; npm test 587/587 pass (14 net new); uv run
+  pytest -q 7/7 pass.
+- **Learnings for future iterations:**
+  - To delegate to another agent and keep the harness's "trajectory at
+    runs/<agent_id>/<task>/<seed>/" invariant, override the sub-agent's
+    `readonly id` field via `(subAgent as unknown as {id:string}).id =
+    this.id` BEFORE calling sub-agent.run(). `readonly` is TS-only; the
+    runtime field is plain JS. The sub-agent's Trajectory.open(...) call
+    will then land under your agent's dir, and metadata.agent_id
+    matches your manifest.id (contract test passes).
+  - For routing agents that cannot do a live tournament re-run in the
+    iteration (no API keys), build a faithful SIMULATED re-run by
+    copying recorded sub-agent cell summaries under the routing agent's
+    dir. Faithful iff the routing agent only changes the trajectory dir
+    and writes a sidecar. Document the simulation explicitly in the
+    analysis doc.
+  - AC "tuned only on the easy slice" is load-bearing: the temptation
+    to re-order routing rules after observing a single hard-slice
+    regression must be resisted, and explicitly disclosed in the doc.
+    The cheap-feature router is interesting precisely because it CAN
+    fail under a more general first rule that fires before a more
+    specific later one — re-ordering by hindsight invalidates the
+    experiment.
+  - `runs/meta-mixture/<task>/<seed>/route.json` is the auditor's
+    artifact for the routing decision. Includes chosen_agent, rule,
+    reasons, features. Survives the trajectory.jsonl.gz gunzip-free
+    audit trail and is the natural diff target if future rules change.
+  - When mining per-task winners across all agents, the canonical
+    source is `runs/<agent>/<task>/<seed>/summary.json` (`pass: bool`).
+    Iterating with Python over Path('runs').iterdir() + filter on
+    task name prefix is the fastest way to build the
+    task → winning-agents map.
+---
