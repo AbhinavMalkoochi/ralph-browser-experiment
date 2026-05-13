@@ -311,6 +311,29 @@ iteration before opening a new slot.
   across steps the way baseline-aids are) so the LLM cannot pick a
   stale id from the prior screenshot. Live eval pending API keys;
   mechanism + harness covered by 29 unit/e2e tests.
+- `fs-memory/` — US-021, twelfth novel slot. **Filesystem-as-working-
+  memory.** The prompt is constant-shape (goal + page banner + scratch
+  tree + last action result), and the LLM curates ALL observation
+  history by writing/reading files in a per-task scratch directory at
+  `<trajectoryDir>/scratch/`. There is NO rolling action history in
+  the prompt — observations the LLM wants to remember past one turn
+  MUST be persisted to disk via `fs.write` / `fs.append` and re-read
+  via `fs.read`. Action vocabulary: filesystem ops (fs.write / append
+  / read / list / delete) scoped to scratch root with path-traversal
+  rejected by `ScratchFs.resolve()`, browser ops (observe / click /
+  type / navigate / scroll / wait), terminate (done / decline).
+  **Distinct on the OBSERVATION-STORAGE axis** from every prior agent
+  — every other agent stores rolling history in the prompt context
+  window, this one externalises it to disk. Ralph-original per the
+  steering note's `preferredDirections` #5
+  ("Filesystem-as-working-memory"). approach_keywords =
+  [filesystem_working_memory, on_disk_scratchpad,
+  externalised_observations, agent_curated_notes, constant_shape_prompt,
+  persistent_per_task_workspace, fs_action_substrate]; Jaccard=0 vs
+  every prior agent (asserted). Live eval deferred (no API keys in
+  this env); mechanism covered by 25 tests including a property test
+  that asserts each LLM request's user message contains at most ONE
+  "--- last action output ---" block.
 - `predicate-driven/` — US-017, fourth novel slot. The LLM authors a
   JS PREDICATE upfront (one synthesis call); the agent loop polls the
   predicate in-page after every action and **terminates from CODE the

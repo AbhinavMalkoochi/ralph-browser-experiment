@@ -1,0 +1,43 @@
+id: fs-memory
+language: typescript
+summary: |
+  US-021, twelfth novel agent slot. Filesystem-as-working-memory. The
+  prompt is constant-shape — it shows only the current page banner, the
+  scratch directory's file tree, and the result of the LAST action. The
+  LLM curates its own observation history by writing to and reading from
+  a per-task scratch directory at <trajectoryDir>/scratch/ (size-capped
+  per file). There is NO rolling observation history in the prompt —
+  if the agent wants to remember something between turns it MUST persist
+  it explicitly via fs.write / fs.append and re-read it via fs.read.
+  Action vocabulary is a small set of named JSON actions split into three
+  families: filesystem ops (fs.write / fs.append / fs.read / fs.list /
+  fs.delete) scoped to the scratch root with path-traversal rejected;
+  browser ops (browser.observe / click / type / navigate / scroll /
+  wait); and terminate (done / decline). browser.observe is the single
+  channel for getting page state into the model — its result appears in
+  the very next prompt and is gone after that unless the agent persists
+  it. Distinct from every prior slot on the observation-storage axis:
+  every other agent stores rolling history in the prompt context window;
+  this one externalises it to disk and pays a per-turn fs.read tax to
+  recall it. Karpathy-style externalised scratchpad memory transplanted
+  into a browser agent.
+approach_keywords:
+  - filesystem_working_memory
+  - on_disk_scratchpad
+  - externalised_observations
+  - agent_curated_notes
+  - constant_shape_prompt
+  - persistent_per_task_workspace
+  - fs_action_substrate
+distinct_from:
+  - baseline-a11y-react
+  - plan-then-execute
+  - runtime-codegen
+  - speculative-rollback
+  - predicate-driven
+  - vision-grounded
+  - network-shadow
+  - dom-mutation-stream
+  - vision-som
+  - codegen-predicate
+  - dom-shell

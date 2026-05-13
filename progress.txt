@@ -664,6 +664,21 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   defaultClient() in harness/ts/llm/client.ts redacts well-known
   auth env-var VALUES (HARD_AUTH_ENV_VARS) when set in process.env;
   keep that list in sync with KNOWN_AUTH_ENV_VARS in auth/inject.ts.
+- fs-memory (US-021) at agents/fs-memory/. The agent's scratch dir
+  lives at `<trajectory.dir>/scratch/` — use `trajectory.dir` as the
+  canonical anchor for any per-task on-disk state next to the gz
+  output. Path safety: ScratchFs.resolve() rejects absolute paths,
+  ".." traversal (uses normalize().split(sep).includes("..")), null
+  bytes, drive prefixes, and paths >200 chars; per-file cap is 32KB
+  (writes throw ScratchPathError on overrun), reads are surfaced
+  at 4KB with a `{truncated:true}` flag. Future agents needing a
+  bounded on-disk scratch should reuse ScratchFs rather than rolling
+  their own — the path-safety surface area is non-trivial.
+- "Constant-shape prompt" property test pattern: scan every recorded
+  ProviderRequest's user message and assert at most ONE
+  "--- last action output ---" block. Robust regression signal if a
+  future refactor accidentally pipes rolling history into the prompt.
+  See harness/ts/tests/fs_memory_agent.test.ts.
 ---
 
 ## 2026-05-08 - US-001
@@ -3584,4 +3599,76 @@ Started: Fri May  8 09:48:39 PM CDT 2026
   - For new agents: copy the LLM-error decline + parse-error + budget
     catch scaffolding from runtime-codegen/vision-som; it's mechanical
     boilerplate that future agents will all need.
+---
+
+## 2026-05-12 - US-021 (fs-memory agent)
+- Shipped agents/fs-memory/ (slot 12). Files: agent.ts (main loop +
+  prompt builder + executeAction dispatch), actions.ts (JSON action
+  parser with alias table + fence/prose tolerance), scratch.ts
+  (ScratchFs class scoped to a base dir with path-traversal rejection
+  + per-file byte cap), manifest.yaml (distinct_from lists every
+  prior agent, approach_keywords designed for Jaccard=0), README.md
+  (mechanism, distinctness table, failure traces motivating the slot).
+- Mechanism (single sentence): the prompt is constant-shape (goal +
+  page banner + scratch tree + last action result), and the LLM
+  curates ALL observation history by writing/reading files in a
+  per-task scratch directory at <trajectoryDir>/scratch/. There is
+  NO rolling action history in the prompt — observations the LLM
+  wants to remember past one turn MUST be persisted to disk.
+- Action vocabulary: filesystem (fs.write / fs.append / fs.read /
+  fs.list / fs.delete) scoped to the scratch root; browser
+  (browser.observe[selector?] / click / type / navigate / scroll /
+  wait); terminate (done / decline). All paths resolved relative to
+  scratch root via ScratchFs.resolve() which rejects absolute paths,
+  ".." traversal, drive prefixes, null bytes, and paths >200 chars.
+  Per-file cap 32KB; reads surfaced to the LLM at 4KB with
+  {truncated: true} flag.
+- Tests at harness/ts/tests/fs_memory_agent.test.ts (25 tests):
+  parseAction coverage (every verb, alias table, fence tolerance,
+  unknown/empty rejection), ScratchFs round-trip + tree + traversal
+  rejection + byte cap + read truncation + delete, end-to-end real-
+  Chrome flow (plan → observe → click → fs.append → done), prompt
+  constant-shape assertion (each prompt contains AT MOST one
+  --- last action output --- block; no historical observations
+  leak forward), path-traversal-from-LLM is surfaced as FAIL with
+  the loop continuing, parse_error tolerance, no-LLM-provider
+  declines, tight-budget short-circuit, executeAction fs.* unit
+  test, manifest Jaccard=0 vs every prior agent.
+- Files changed: agents/fs-memory/{agent.ts,actions.ts,scratch.ts,
+  manifest.yaml,README.md} (new); harness/ts/tests/fs_memory_agent.test.ts
+  (new); prd.json (US-021 passes:true).
+- Quality checks: `npx tsc --noEmit` clean; `npm test` 573/573 pass
+  (25 net new); `uv run pytest -q` 7/7. No environment regressions.
+- **Learnings for future iterations:**
+  - The `trajectory.dir` getter is the canonical anchor for per-task
+    agent state that should land *next to* the gzipped trajectory.
+    fs-memory writes scratch/ under it; the runner cleans up the
+    parent dir when it cleans up runs/<agent>/<task>/<seed>/, so no
+    extra teardown was needed.
+  - Adding a "constant-shape prompt" test that scans EACH llm
+    request for at most one observation block is a robust regression
+    signal for any agent that claims this property. If a future
+    refactor accidentally pipes history into the prompt, this fails
+    loudly. Pattern: count `--- last action output ---` markers in
+    every recorded ProviderRequest's user message.
+  - ScratchPathError surfaced as a FAIL (`ok:false`) in
+    executeAction's catch keeps the loop alive when the LLM emits a
+    bad path. That's the right shape — terminal errors should be
+    LLM provider / budget / session timeout, not LLM-authored data.
+  - Distinctness keywords for "novelty axis is observation storage"
+    (filesystem_working_memory / on_disk_scratchpad /
+    externalised_observations / agent_curated_notes /
+    constant_shape_prompt / persistent_per_task_workspace /
+    fs_action_substrate) all picked to be self-evidently distinct
+    from prior agents' substrate-/action-/observation-axis labels.
+    Verified Jaccard=0 in the test, not just <0.5.
+  - For agents whose action shape has nested fields (e.g.
+    fs.write {path, content}), the JSON parser's `requireString()`
+    helper that accepts multiple key aliases (path / file ;
+    content / text / body) covers the common LLM near-miss without
+    rewriting the parser per action — kept tolerant in actions.ts.
+  - Path resolution: `normalize(trimmed).split(sep).includes("..")`
+    catches `a/../../b` cleanly. Don't rely on prefix-check alone
+    (`norm.startsWith("..")`) — normalize collapses some but not
+    all in the middle of a path.
 ---

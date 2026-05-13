@@ -506,8 +506,8 @@
     },
     {
       "id": "US-021",
-      "title": "Agent slot 8 — eighth novel complete agent (Ralph-invented strongly preferred)",
-      "description": "As Ralph, ship the eighth complete end-to-end browser agent. Distinct mechanism. STEERING (2026-05-10): the obvious candidates are now spelled out as their own user stories (US-031 vision-SoM, US-032 codegen×predicate composition, US-033 DOM-as-filesystem). This slot is for whatever NEW Ralph-original mechanism survives after those land — something that is not (a) raw JS (runtime-codegen owns it), (b) pixel coords without overlay (vision-grounded failed), (c) two-LLM-per-step (speculative-rollback failed), and (d) NOT one of US-031/US-032/US-033. Mine docs/failure-clusters-*.md from US-022 if it has shipped, otherwise mine runs/*/*/0/trajectory.jsonl.gz directly. Strong preference for: skill crystallisation, filesystem-as-working-memory, multi-tab parallel exploration, or a genuinely new modality (e.g. computed-style observation, request-trace replay, or worker-thread shadowing).",
+      "title": "Agent slot 12 — fs-memory (filesystem-as-working-memory, Ralph-original)",
+      "description": "As Ralph, ship the twelfth complete end-to-end browser agent. Distinct mechanism. STEERING (2026-05-10): the obvious candidates are now spelled out as their own user stories (US-031 vision-SoM, US-032 codegen×predicate composition, US-033 DOM-as-filesystem). This slot is for whatever NEW Ralph-original mechanism survives after those land — something that is not (a) raw JS (runtime-codegen owns it), (b) pixel coords without overlay (vision-grounded failed), (c) two-LLM-per-step (speculative-rollback failed), and (d) NOT one of US-031/US-032/US-033. Mine docs/failure-clusters-*.md from US-022 if it has shipped, otherwise mine runs/*/*/0/trajectory.jsonl.gz directly. Strong preference for: skill crystallisation, filesystem-as-working-memory, multi-tab parallel exploration, or a genuinely new modality (e.g. computed-style observation, request-trace replay, or worker-thread shadowing).",
       "acceptanceCriteria": [
         "Same structure as previous slots",
         "Distinctness check passes — Jaccard < 0.5 vs ALL prior agents AND vs US-031/US-032/US-033 once shipped",
@@ -520,8 +520,8 @@
         "Tests pass"
       ],
       "priority": 29,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Shipped agents/fs-memory/ (slot 12). Mechanism: filesystem-as-working-memory — the prompt is constant-shape (goal + page banner + scratch tree + last action result only), and the LLM curates its own observation history by writing to a per-task scratch directory at <trajectoryDir>/scratch/. There is no rolling action history in the prompt. Action vocabulary: filesystem ops (fs.write/append/read/list/delete) scoped to scratch root with path-traversal rejected, browser ops (observe/click/type/navigate/scroll/wait), terminate (done/decline). Distinct from every prior slot on the observation-storage axis: every other agent stores rolling history in the prompt context window, this one externalises it to disk and pays a per-turn fs.read tax to recall it. Ralph-original per steering preferredDirections #5. approach_keywords Jaccard=0 vs every prior agent (asserted in test suite). 25 new tests (TS) passing; full suite 573/573 + 7/7 Python. Live easy/hard eval deferred (no API keys in this env)."
     },
     {
       "id": "US-022",
