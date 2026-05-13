@@ -1,0 +1,35 @@
+id: dom-shell
+language: typescript
+summary: |
+  US-033. The DOM tree IS the filesystem. Each turn the LLM emits ONE
+  shell-style command — `ls`, `cd form#login`, `cat`, `grep "Total"`,
+  `find button --interactive`, `attr href a.next`, `click "Continue"`,
+  `type input[name="email"] "user@example.com" --submit`, `scroll`, `wait`,
+  `done`, `decline`. The harness tokenises the line and compiles each
+  command to a small CDP Runtime.evaluate. The CWD is a CSS-selector
+  chain that PERSISTS across turns: `cd subtree` pushes a segment, `cd ..`
+  pops, `cd /` resets. Action commands (click/type) resolve relative to
+  cwd, so the LLM can `cd` into a shadow host or complex form and then
+  operate with short local-relative selectors. Distinct from
+  runtime-codegen (unbounded JS bodies) and baseline-a11y-react (named
+  JSON actions): the LLM is constrained to a TINY shell vocabulary and the
+  harness owns the compile-to-evaluate path.
+approach_keywords:
+  - filesystem_metaphor
+  - cwd_navigation
+  - shell_command_substrate
+  - vocabulary_compiled_to_evaluate
+  - persistent_selector_chain
+  - one_command_per_turn
+  - posix_flavoured_dom
+distinct_from:
+  - baseline-a11y-react
+  - plan-then-execute
+  - runtime-codegen
+  - speculative-rollback
+  - predicate-driven
+  - vision-grounded
+  - network-shadow
+  - dom-mutation-stream
+  - vision-som
+  - codegen-predicate

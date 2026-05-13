@@ -3553,3 +3553,35 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     distinctness against each parent independently, and the test suite
     enforces it via Jaccard on each one.
 ---
+
+## 2026-05-12 - US-033 (DOM-as-filesystem agent)
+- Shipped agents/dom-shell/: shell.ts (tokeniser, parser, cwd algebra,
+  compile-to-evaluate, in-page handler), agent.ts, manifest.yaml, README.md.
+- New action substrate: tiny shell vocabulary (ls/cd/cat/grep/find/attr/click/
+  type/scroll/wait/done/decline). One command per turn, parsed by the harness,
+  compiled to a single Runtime.evaluate per command. The cwd is a CSS-selector
+  chain that persists across steps; `cd` pushes a segment, `cd ..` pops,
+  `cd /` resets. Action commands resolve cwd-relative.
+- Files changed: agents/dom-shell/* (new), harness/ts/tests/dom_shell_agent.test.ts (new),
+  prd.json (US-033 passes:true).
+- Quality checks: `npx tsc --noEmit` clean; `npm test` 548/548 pass
+  (30 net new dom-shell tests).
+- **Learnings for future iterations:**
+  - `#` in a shell-style DSL conflicts with CSS id selectors. Don't try to
+    support both shell comments AND `cd form#login` — the heuristic
+    ("comment only after whitespace") still breaks `cd #root`. Drop
+    comments entirely; the LLM rarely emits them anyway.
+  - When parser tolerance includes "last non-empty line wins", the
+    "Thought: ...\n<cmd>" pattern works for free.
+  - In-page handlers that are large strings should be defined ONCE in a
+    module-scope template literal (IN_PAGE_HANDLER) and inlined into
+    every compileCommand() expression. Avoids stateful page setup and
+    survives navigations.
+  - cwd survives navigations only if the selector still resolves. Probe
+    it at the start of each step with a tiny Boolean evaluate and reset
+    cwd to root if it no longer resolves — the LLM was about to be misled
+    by a stale display otherwise.
+  - For new agents: copy the LLM-error decline + parse-error + budget
+    catch scaffolding from runtime-codegen/vision-som; it's mechanical
+    boilerplate that future agents will all need.
+---
