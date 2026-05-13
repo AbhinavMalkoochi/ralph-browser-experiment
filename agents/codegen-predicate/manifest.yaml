@@ -1,0 +1,31 @@
+id: codegen-predicate
+language: typescript
+summary: |
+  Ninth novel agent (US-032). COMPOSED mechanism: fuses runtime-codegen's
+  raw-JS action substrate (the LLM emits the BODY of an async JS function each
+  step, executed in-page via CDP Runtime.evaluate) with predicate-driven's
+  code-decided termination (one upfront synthesis call emits a JS predicate
+  that the harness polls after every script; the loop exits the moment the
+  predicate fires TRUE). The action LLM has NO `done` action — termination is
+  owned by code that runs in the page itself. Distinct from each parent in
+  isolation because the COMPOSITION is new: neither runtime-codegen
+  (LLM-self-terminated via {done:true}) nor predicate-driven (CSS-selector
+  action substrate) has BOTH a free-form action substrate AND a code-decided
+  exit condition. Distinct from speculative-rollback (the predecessor this
+  composition supersedes) because there is exactly ONE action LLM call per
+  step — no proposer/judge double-call, no cost doubling — and the loop is
+  terminated by a deterministic page-state probe rather than by a second
+  LLM's "did that help?" verdict.
+approach_keywords:
+  - composed_mechanism
+  - codegen_action_substrate
+  - predicate_terminated_loop
+  - code_decided_done
+  - in_page_synthesised_test
+  - script_action_with_external_done
+distinct_from:
+  - baseline-a11y-react
+  - plan-then-execute
+  - runtime-codegen
+  - predicate-driven
+  - speculative-rollback

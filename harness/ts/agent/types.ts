@@ -10,6 +10,7 @@ import type { CdpSession } from "../cdp/client.js";
 /** Why a trajectory ended. */
 export type TerminalState =
   | "DONE" // agent finished and believes the goal is met
+  | "DONE_BY_PREDICATE" // codegen-predicate (US-032): loop exited because the agent-synthesised predicate fired true
   | "DECLINED" // agent gave up explicitly (e.g. cannot proceed)
   | "BUDGET_EXCEEDED" // budget axis tripped
   | "ERROR" // unrecoverable internal failure

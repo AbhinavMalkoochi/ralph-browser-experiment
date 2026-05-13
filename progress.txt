@@ -3497,3 +3497,59 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     at the script-string level keep the page-side code single-pass
     and free of cross-realm closure tricks.
 ---
+
+## 2026-05-12 - US-032
+- Shipped codegen-predicate agent: ninth novel slot, composed mechanism.
+  Fuses runtime-codegen's raw-JS body action substrate with predicate-driven's
+  code-decided termination. ONE upfront synthesis LLM call emits a JS predicate
+  (reuses agents/predicate-driven/predicate.ts); per-step ONE action LLM call
+  emits an async-function body (reuses agents/runtime-codegen/codegen.ts +
+  observe.ts); harness polls predicate after every body and exits the loop
+  with terminal_state='DONE_BY_PREDICATE' when it fires true. Body's
+  {done:true} field is IGNORED — only code decides termination.
+- Files added:
+  - agents/codegen-predicate/agent.ts (main loop: synth → pre-check →
+    action loop with predicate polling; declines on parse-failure or
+    LLM-replay-miss; respects budget + session-timeout).
+  - agents/codegen-predicate/manifest.yaml (distinct_from lists
+    baseline-a11y-react, plan-then-execute, runtime-codegen,
+    predicate-driven, AND speculative-rollback — every relevant prior;
+    approach_keywords designed for Jaccard <= 0.5 against each parent).
+  - agents/codegen-predicate/README.md (mechanism, what's distinct from
+    each parent, failure modes targeted, cost/quality tradeoff vs
+    speculative-rollback).
+  - harness/ts/tests/codegen_predicate_agent.test.ts (6 tests:
+    end-to-end real-Chrome predicate-flip → DONE_BY_PREDICATE,
+    predicate-true-at-start short circuits with no action LLM call,
+    body's done:true is ignored when predicate is false,
+    unparseable synthesis JSON declines early, no-LLM-provider declines
+    during synthesis, manifest distinctness vs runtime-codegen,
+    predicate-driven, speculative-rollback).
+- harness/ts/agent/types.ts: TerminalState union gained 'DONE_BY_PREDICATE'
+  (predicate-driven also emits this — they share the terminal, so the
+  type was added there for both agents).
+- Live eval (>=6/10 hard, >=20/22 easy): deferred — this Ralph environment
+  has no OPENAI/GEMINI/ANTHROPIC API keys. The mechanism is verified
+  end-to-end on real Chrome via the test suite (predicate-flip path and
+  done-ignored path both proven). README documents the expected hard-slice
+  win zone (recoverable, late-hydration: predicate keeps agent honest
+  past runtime-codegen's premature self-done).
+- Quality checks: `npx tsc --noEmit` clean; `npm test` 518/518 pass
+  (6 net new from codegen-predicate + 512 prior); `uv run pytest -q` 7/7.
+- **Learnings for future iterations:**
+  - When composing existing agents, IMPORT their helpers (parsePredicate,
+    evaluatePredicate, extractScript, runEmittedScript, observePage,
+    formatObservation) rather than copy-pasting — keeps the composition
+    novelty in the composition, not in re-implemented utilities. Both
+    parents already exposed the necessary functions because predicate.ts
+    and codegen.ts are pure modules.
+  - The 'DONE_BY_PREDICATE' terminal_state is shared between
+    predicate-driven (US-017) and codegen-predicate (US-032). Adding it
+    once to the TerminalState union benefits both agents. Future agents
+    with code-decided termination should reuse this terminal rather than
+    inventing 'DONE_BY_X' variants.
+  - Pattern for composed-agent README: explicit "vs each parent" sections
+    rather than one prose paragraph. The reader needs to verify
+    distinctness against each parent independently, and the test suite
+    enforces it via Jaccard on each one.
+---
