@@ -3672,3 +3672,14 @@ Started: Fri May  8 09:48:39 PM CDT 2026
     (`norm.startsWith("..")`) — normalize collapses some but not
     all in the middle of a path.
 ---
+
+## 2026-05-12 - US-022 (Mine failure traces, propose >=3 new approaches)
+- Wrote docs/failure-clusters-2026-05-12.md (failure clusters across all 274 trajectories in runs/).
+- Wrote docs/proposed-approaches-2026-05-12.md (5 approaches grounded in trace evidence; keywords disjoint from existing agents).
+- No code changes; 573 TS tests still pass.
+- **Learnings for future iterations:**
+  - 274 verdict.json + matching trajectory.jsonl.gz files already exist under runs/<agent>/<task>/0/. The leaderboard.json at runs/leaderboard.json is sparse (only an empty hard-app slice) but the per-cell sidecars are the real source of truth.
+  - 88% of failures (`DECLINED`+`DONE_BY_PREDICATE`) are step-budget exhaustion in repeat-action loops, NOT wrong-answer. The hard tasks 0-of-N across the whole roster are: hard-canvas-drag, hard-iframe-drag, hard-multi-tab, hard-conditional-form, hard-pdf-task. These define the actual capability frontier and should drive the next mechanism choices.
+  - Mining pattern: `find runs -name verdict.json` → join to gzipped trajectory.jsonl.gz → read `kind:'end'` line for `terminal_state` + `decline_reason`. The last 1-2 `step` lines tell you what the agent was looping on.
+  - When proposing new approaches, check disjointness against every `agents/*/manifest.yaml` `approach_keywords` block — the steering note rejects duplicate mechanisms.
+---
