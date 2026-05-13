@@ -586,8 +586,8 @@
         "Tests pass"
       ],
       "priority": 33,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented at docs/results.md. Consolidates champion/leaderboard/failure/proposed-approaches docs into a single post-mortem with: \u00a71 champion summary referencing agents/runtime-codegen/README.md + trajectory paths, \u00a72 full per-slice leaderboard tables, \u00a73 ablation findings (meta-mixture US-024, model US-030, fs-memory/dom-shell), \u00a74 failure taxonomy + the five 0-of-N tasks, \u00a75 mechanism\u2192success correlation across approach_keywords, \u00a76 four falsifiable next-paradigm hypotheses (each with pre-registered reject conditions), \u00a77 keep/replace/extend lessons, \u00a78 reproducibility recipe (npx tsx synthesize_summaries + build_leaderboard + make report), \u00a79 companion-doc index. Every number sourced from runs/leaderboard.json so the whole doc is regenerable. 587 TS tests + 7 Python tests pass."
     }
   ],
   "steeringNotes": {
